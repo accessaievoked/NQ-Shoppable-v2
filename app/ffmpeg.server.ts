@@ -45,30 +45,7 @@ function extractFrame(inputPath: string, outPath: string, timeOffset = 1): Promi
   });
 }
 
-/**
- * Compresses a video to a web-optimised H.264 MP4.
- * - Scales down to max 1080p height (won't upscale smaller videos)
- * - CRF 23 — standard web quality, visually sharp
- * - faststart — moov atom at the front so browsers can play before full download
- */
-function compressToMp4(inputPath: string, outPath: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
-      .outputOptions([
-        "-vf", "scale=-2:min(1080\\,ih)",
-        "-c:v", "libx264",
-        "-crf", "23",
-        "-preset", "fast",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-movflags", "+faststart",
-      ])
-      .output(outPath)
-      .on("end", () => resolve())
-      .on("error", (err) => reject(err))
-      .run();
-  });
-}
+// compressToMp4 intentionally removed — skipping compression to test raw quality vs load time
 
 /**
  * Runs FFmpeg to convert an MP4 to HLS segments.
@@ -127,11 +104,10 @@ export async function processVideo(
   mp4Url: string,
   baseKey: string
 ): Promise<{ compressedUrl: string; streamUrl: string; thumbnailUrl: string }> {
-  const tmpDir         = await fs.mkdtemp(path.join(os.tmpdir(), "nq-video-"));
-  const inputPath      = path.join(tmpDir, "input.mp4");
-  const compressedPath = path.join(tmpDir, "compressed.mp4");
-  const thumbPath      = path.join(tmpDir, "thumbnail.jpg");
-  const hlsDir         = path.join(tmpDir, "hls");
+  const tmpDir    = await fs.mkdtemp(path.join(os.tmpdir(), "nq-video-"));
+  const inputPath = path.join(tmpDir, "input.mp4");
+  const thumbPath = path.join(tmpDir, "thumbnail.jpg");
+  const hlsDir    = path.join(tmpDir, "hls");
   await fs.mkdir(hlsDir);
 
   try {
@@ -139,27 +115,11 @@ export async function processVideo(
     console.log(`[Video] Downloading ${mp4Url}`);
     await downloadToTemp(mp4Url, inputPath);
 
-    // 2. Compress to 720p H.264 (the main perf win — small file, faststart)
-    console.log(`[Video] Compressing to 720p H.264`);
-    await compressToMp4(inputPath, compressedPath);
-
-    // 3. Upload compressed MP4 to R2
-    const compressedBuffer = await fs.readFile(compressedPath);
-    const compressedKey    = `videos/${baseKey}-web.mp4`;
-    await s3.send(new PutObjectCommand({
-      Bucket: R2_BUCKET_NAME,
-      Key: compressedKey,
-      Body: compressedBuffer,
-      ContentType: "video/mp4",
-    }));
-    const compressedUrl = `${R2_PUBLIC_URL}/${compressedKey}`;
-    console.log(`[Video] Compressed → ${compressedUrl}`);
-
-    // 4. Extract thumbnail & HLS from the compressed file (fast — already H.264)
+    // 2. Extract thumbnail & HLS directly from the original (no compression)
     console.log(`[Video] Extracting thumbnail & converting to HLS`);
     await Promise.all([
-      extractFrame(compressedPath, thumbPath, 1),
-      convertToHLS(compressedPath, hlsDir),
+      extractFrame(inputPath, thumbPath, 1),
+      convertToHLS(inputPath, hlsDir),
     ]);
 
     // 5. Upload thumbnail
@@ -180,7 +140,7 @@ export async function processVideo(
     const thumbnailUrl = `${R2_PUBLIC_URL}/${thumbKey}`;
     console.log(`[Video] Done — stream: ${streamUrl} | thumb: ${thumbnailUrl}`);
 
-    return { compressedUrl, streamUrl, thumbnailUrl };
+    return { compressedUrl: mp4Url, streamUrl, thumbnailUrl };
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true });
   }
