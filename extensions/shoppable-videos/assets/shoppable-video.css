@@ -293,6 +293,24 @@
   display: block;
 }
 
+/* Thumbnail overlay — visible immediately, fades out when video plays.
+   Uses a real <img> instead of poster= because HLS.js destroys the poster
+   attribute on attachMedia (confirmed HLS.js bug: issues #377, #925, #1609). */
+.nq-slide-thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 2;
+  transition: opacity 0.35s ease;
+  pointer-events: none;
+}
+
+.nq-slide-thumb-hidden {
+  opacity: 0;
+}
+
 /* Close button — top right, square */
 .nq-close-btn {
   position: absolute;
@@ -676,7 +694,7 @@ body.nq-modal-open #shopify-section-header {
   align-items: center;
   justify-content: center;
   background: transparent;
-  z-index: 5;
+  z-index: 3; /* above .nq-slide-thumb (z-index:2), below nothing */
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s;

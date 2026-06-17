@@ -134,7 +134,11 @@
           videoEl.muted = isMuted;
           videoEl.play().catch(() => {});
           const slide = swiperWrapper.children[index];
-          if (slide) slide.classList.remove('nq-loading');
+          if (slide) {
+            slide.classList.remove('nq-loading');
+            const thumb = slide.querySelector('.nq-slide-thumb');
+            if (thumb) thumb.classList.add('nq-slide-thumb-hidden');
+          }
         }
       });
       slideHlsMap[index] = hls || null;
@@ -173,7 +177,11 @@
           if (videoEl.readyState >= 2) {
             videoEl.play().catch(() => {});
             const slide = swiperWrapper.children[i];
-            if (slide) slide.classList.remove('nq-loading');
+            if (slide) {
+              slide.classList.remove('nq-loading');
+              const thumb = slide.querySelector('.nq-slide-thumb');
+              if (thumb) thumb.classList.add('nq-slide-thumb-hidden');
+            }
           }
           // else onReady callback will play it once stream is loaded
         } else {
@@ -259,10 +267,13 @@
       document.body.style.overflow = 'hidden';
       document.body.classList.add('nq-modal-open');
 
-      // Build one slide per video
+      // Build one slide per video.
+      // IMPORTANT: poster attribute is destroyed by HLS.js on attachMedia — do NOT rely on it.
+      // Instead, use a separate <img> overlay (same pattern as carousel cards) that fades out on play.
       swiperWrapper.innerHTML = videos.map((v) => `
         <div class="swiper-slide nq-video-slide nq-loading">
-          <video class="nq-slide-video" playsinline webkit-playsinline muted loop preload="none" poster="${v.thumbnailUrl || ''}"></video>
+          <video class="nq-slide-video" playsinline webkit-playsinline muted loop preload="none"></video>
+          ${v.thumbnailUrl ? `<img class="nq-slide-thumb" src="${v.thumbnailUrl}" alt="">` : ''}
           <div class="nq-video-loading"><div class="nq-spinner"></div></div>
         </div>
       `).join('');
