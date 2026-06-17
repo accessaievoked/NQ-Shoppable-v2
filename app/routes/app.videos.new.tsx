@@ -146,32 +146,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return { error: "A video with this URL already exists in your store." };
   }
 
-  // ── Process video: compress + HLS conversion + thumbnail extraction ────────
-  let streamUrl: string | null = null;
-  let thumbnailUrl: string | null = null;
-  try {
-    const slug = (title || productTitle || "video")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .slice(0, 40);
-    const baseKey = `${Date.now()}-${slug}`;
-    const processed = await processVideo(videoUrl, baseKey);
-    streamUrl    = processed.streamUrl;
-    thumbnailUrl = processed.thumbnailUrl;
-    videoUrl     = processed.compressedUrl; // store compressed version, not the raw upload
-  } catch (err) {
-    // Non-fatal — video still plays as the original MP4, just without compression/HLS/thumbnail
-    console.error("[Video] Processing failed, saving raw URL:", err);
-  }
+  // ── Generate base key for this video ─────────────────────────────────────
+  const slug = (title || productTitle || "video")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .slice(0, 40);
+  const baseKey = `${Date.now()}-${slug}`;
 
-  // ── Save to DB ────────────────────────────────────────────────────────────
-  await db.video.create({
+  // ── Save to DB immediately so the user isn't blocked ─────────────────────
+  // streamUrl / thumbnailUrl are null until background processing finishes.
+  const video = await db.video.create({
     data: {
       shop: session.shop,
       title: title || productTitle || "Untitled",
       videoUrl,
-      streamUrl,
-      thumbnailUrl: thumbnailUrl ?? "",
+      streamUrl: null,
+      thumbnailUrl: "",
       productId,
       variantId: variantIdNum,
       productTitle,
@@ -181,6 +171,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       currency: currency || "INR",
     },
   });
+
+  // ── Process video in background (compress + HLS + thumbnail) ─────────────
+  // Do NOT await — this lets the response return immediately, avoiding 502s on large files.
+  processVideo(videoUrl, baseKey)
+    .then(async (processed) => {
+      await db.video.update({
+        where: { id: video.id },
+        data: {
+          videoUrl: processed.compressedUrl,
+          streamUrl: processed.streamUrl,
+          thumbnailUrl: processed.thumbnailUrl,
+        },
+      });
+      console.log(`[Video] Background processing complete for video ${video.id}`);
+    })
+    .catch((err) => {
+      console.error(`[Video] Background processing failed for video ${video.id}:`, err);
+    });
 
   return redirect("/app");
 };

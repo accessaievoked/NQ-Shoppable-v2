@@ -326,6 +326,12 @@ export default function Index() {
                     <span style={styles.viewsBadge}>
                       👁 {video.viewCount}
                     </span>
+                    {/* Processing badge — shown while FFmpeg runs in background */}
+                    {!video.streamUrl && (
+                      <div style={styles.processingBadge}>
+                        ⏳ Processing…
+                      </div>
+                    )}
                   </div>
 
                   {/* Product row */}
@@ -532,6 +538,19 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     padding: "3px 7px",
     borderRadius: "20px",
+  },
+
+  processingBadge: {
+    position: "absolute",
+    inset: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "rgba(0,0,0,0.55)",
+    color: "#fff",
+    fontSize: "13px",
+    fontWeight: 700,
+    letterSpacing: "0.02em",
   },
 
   productRow: {
