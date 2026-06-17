@@ -518,6 +518,19 @@
 
           if (entry.isIntersecting) {
             shouldPlay.add(card);
+
+            // HLS.js doesn't honour the `loop` attribute on MSE streams —
+            // when the last segment ends the video just stops. Fix: restart manually.
+            if (!videoEl._nqEndedHandler) {
+              videoEl._nqEndedHandler = () => {
+                if (shouldPlay.has(card)) {
+                  videoEl.currentTime = 0;
+                  videoEl.play().catch(() => {});
+                }
+              };
+              videoEl.addEventListener('ended', videoEl._nqEndedHandler);
+            }
+
             // Try play now — succeeds if stream already loaded, otherwise
             // preloadObserver's onReady will pick it up via shouldPlay
             videoEl.play()
@@ -528,12 +541,26 @@
               .catch(() => {});
           } else {
             shouldPlay.delete(card);
+            // Clean up ended handler when card leaves view
+            if (videoEl._nqEndedHandler) {
+              videoEl.removeEventListener('ended', videoEl._nqEndedHandler);
+              delete videoEl._nqEndedHandler;
+            }
             videoEl.pause();
             videoEl.classList.remove('nq-playing');
             if (thumb) thumb.classList.remove('nq-hidden');
           }
         });
       }, { root: track, threshold: 0.65 });
+
+      // Resume shouldPlay videos when user switches back to this tab
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) return;
+        shouldPlay.forEach((card) => {
+          const videoEl = card.querySelector('.nq-inline-video');
+          if (videoEl && videoEl.paused) videoEl.play().catch(() => {});
+        });
+      });
 
       this.container.querySelectorAll('.nq-video-card').forEach((card) => {
         this.preloadObserver.observe(card);
