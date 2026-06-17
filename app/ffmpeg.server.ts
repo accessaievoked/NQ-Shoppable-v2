@@ -76,15 +76,19 @@ async function uploadDirToR2(localDir: string, r2Prefix: string): Promise<void> 
   await Promise.all(
     files.map(async (filename) => {
       const buffer = await fs.readFile(path.join(localDir, filename));
-      const contentType = filename.endsWith(".m3u8")
-        ? "application/vnd.apple.mpegurl"
-        : "video/mp2t";
+      const isPlaylist  = filename.endsWith(".m3u8");
+      const contentType = isPlaylist ? "application/vnd.apple.mpegurl" : "video/mp2t";
+      // Playlists may be regenerated, so short cache; segments are immutable
+      const cacheControl = isPlaylist
+        ? "public, max-age=60"
+        : "public, max-age=31536000, immutable";
       await s3.send(
         new PutObjectCommand({
           Bucket: R2_BUCKET_NAME,
           Key: `${r2Prefix}/${filename}`,
           Body: buffer,
           ContentType: contentType,
+          CacheControl: cacheControl,
         })
       );
     })
@@ -130,6 +134,7 @@ export async function processVideo(
       Key: thumbKey,
       Body: thumbBuffer,
       ContentType: "image/webp",
+      CacheControl: "public, max-age=31536000, immutable",
     }));
 
     // 6. Upload HLS chunks + playlist
