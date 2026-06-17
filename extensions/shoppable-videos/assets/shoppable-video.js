@@ -277,11 +277,14 @@
           grabCursor: true,
           resistanceRatio: 0.6,
           on: {
-            slideChange: () => {
+            // Fire during the swipe animation — start buffering the incoming video immediately
+            slideChangeTransitionStart: () => {
               modalIndex = swiperInstance.activeIndex;
-              updateUI(modalIndex);
               manageSlides(modalIndex);
-              // Sync mute icon
+            },
+            // Fire after animation completes — update UI once the slide is settled
+            slideChange: () => {
+              updateUI(modalIndex);
               iconMuted.style.display = isMuted ? 'block' : 'none';
               iconSound.style.display  = isMuted ? 'none'  : 'block';
             },
