@@ -31,13 +31,13 @@ async function downloadToTemp(url: string, destPath: string): Promise<void> {
 
 /**
  * Extracts a single frame from a video at the given time offset (seconds).
- * Saves it as a JPEG to outPath.
+ * Saves it as a WebP to outPath (smaller than JPEG at equivalent quality).
  */
 function extractFrame(inputPath: string, outPath: string, timeOffset = 1): Promise<void> {
   return new Promise((resolve, reject) => {
     ffmpeg(inputPath)
       .seekInput(timeOffset)
-      .outputOptions(["-vframes 1", "-f image2"])
+      .outputOptions(["-vframes 1", "-f webp", "-quality 82"])
       .output(outPath)
       .on("end", () => resolve())
       .on("error", (err) => reject(err))
@@ -98,7 +98,7 @@ async function uploadDirToR2(localDir: string, r2Prefix: string): Promise<void> 
  * @param mp4Url    Public R2 URL of the source MP4
  * @param baseKey   Base R2 key, e.g. "1234567890-my-product"
  *                  HLS → hls/{baseKey}/playlist.m3u8
- *                  Thumbnail → thumbnails/{baseKey}.jpg
+ *                  Thumbnail → thumbnails/{baseKey}.webp
  */
 export async function processVideo(
   mp4Url: string,
@@ -106,7 +106,7 @@ export async function processVideo(
 ): Promise<{ compressedUrl: string; streamUrl: string; thumbnailUrl: string }> {
   const tmpDir    = await fs.mkdtemp(path.join(os.tmpdir(), "nq-video-"));
   const inputPath = path.join(tmpDir, "input.mp4");
-  const thumbPath = path.join(tmpDir, "thumbnail.jpg");
+  const thumbPath = path.join(tmpDir, "thumbnail.webp");
   const hlsDir    = path.join(tmpDir, "hls");
   await fs.mkdir(hlsDir);
 
@@ -124,12 +124,12 @@ export async function processVideo(
 
     // 5. Upload thumbnail
     const thumbBuffer = await fs.readFile(thumbPath);
-    const thumbKey    = `thumbnails/${baseKey}.jpg`;
+    const thumbKey    = `thumbnails/${baseKey}.webp`;
     await s3.send(new PutObjectCommand({
       Bucket: R2_BUCKET_NAME,
       Key: thumbKey,
       Body: thumbBuffer,
-      ContentType: "image/jpeg",
+      ContentType: "image/webp",
     }));
 
     // 6. Upload HLS chunks + playlist
