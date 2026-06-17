@@ -1,3 +1,12 @@
 .cache
 build
 node_modules
+.git
+.env
+.env.*
+.react-router
+prisma/dev.sqlite
+prisma/dev.sqlite-journal
+extensions/*/dist
+.shopify
+.shopify.lock

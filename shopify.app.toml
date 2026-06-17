@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "d918586244ea9b36fc2e05398909add1"
-application_url = "https://example.com"
+application_url = "https://nq-shoppable-v2.fly.dev"
 embedded = true
 name = "NQ-shoppable-v2"
 
@@ -34,7 +34,7 @@ name = "Description"
 type = "multi_line_text_field"
 
 [app_proxy]
-url = "https://example.com"
+url = "https://nq-shoppable-v2.fly.dev"
 subpath = "nq-videos"
 prefix = "apps"
 
@@ -50,8 +50,7 @@ api_version = "2026-07"
   topics = [ "app/scopes_update" ]
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://nq-shoppable-v2.fly.dev/auth/callback" ]
 
 [build]
-include_config_on_deploy = true
 automatically_update_urls_on_dev = true

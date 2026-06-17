@@ -654,6 +654,37 @@ body.nq-modal-open #shopify-section-header {
   }
 }
 
+/* ─── Modal video loading spinner ────────────────────────────────── */
+.nq-video-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  z-index: 5;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.nq-modal-video-panel.nq-loading .nq-video-loading {
+  opacity: 1;
+}
+
+.nq-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid rgba(255,255,255,0.2);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: nq-spin 0.7s linear infinite;
+}
+
+@keyframes nq-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* ─── Carousel responsive ────────────────────────────────────────── */
 @media (min-width: 768px) {
   .nq-video-card { flex: 0 0 190px; }

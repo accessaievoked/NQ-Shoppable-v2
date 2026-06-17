@@ -93,6 +93,15 @@
 
     if (!modal) return;
 
+    // ── Loading overlay ──────────────────────────────────────────────
+    const videoPanel = modal.querySelector('.nq-modal-video-panel');
+    if (videoPanel) {
+      const loadingOverlay = document.createElement('div');
+      loadingOverlay.className = 'nq-video-loading';
+      loadingOverlay.innerHTML = '<div class="nq-spinner"></div>';
+      videoPanel.appendChild(loadingOverlay);
+    }
+
     // ── Hidden elements for preloading up to 2 videos ahead ─────────
     const preloadEls = [0, 1, 2].map(() => {
       const el = document.createElement('video');
@@ -138,6 +147,17 @@
     function renderModalVideo() {
       const v = modalVideos[modalIndex];
       if (!v) return;
+
+      // Show loading spinner
+      const vPanel = modal.querySelector('.nq-modal-video-panel');
+      if (vPanel) vPanel.classList.add('nq-loading');
+
+      // Hide spinner once video is actually playing
+      const hideLoading = () => {
+        if (vPanel) vPanel.classList.remove('nq-loading');
+        videoEl.removeEventListener('playing', hideLoading);
+      };
+      videoEl.addEventListener('playing', hideLoading);
 
       // Stop previous
       videoEl.pause();
