@@ -102,16 +102,16 @@
       videoPanel.appendChild(loadingOverlay);
     }
 
-    // ── Hidden elements for preloading up to 2 videos ahead ─────────
-    const preloadEls = [0, 1, 2].map(() => {
+    // ── Hidden elements for preloading up to 3 videos ahead + 2 behind ─────────
+    const preloadEls = [0, 1, 2, 3, 4].map(() => {
       const el = document.createElement('video');
       el.muted = true;
       el.style.cssText = 'display:none;position:absolute;pointer-events:none;';
       document.body.appendChild(el);
       return el;
     });
-    // slots: 0 = next, 1 = next+1, 2 = prev
-    let preloadHls = [null, null, null];
+    // slots: 0 = N+1, 1 = N+2, 2 = N+3, 3 = N-1, 4 = N-2
+    let preloadHls = [null, null, null, null, null];
 
     function preloadAt(v, slotIndex) {
       if (preloadHls[slotIndex]) { preloadHls[slotIndex].destroy(); preloadHls[slotIndex] = null; }
@@ -139,7 +139,7 @@
       videoEl.pause();
       videoEl.src = '';
       if (modalHls) { modalHls.destroy(); modalHls = null; }
-      // Clean up all preload instances
+      // Clean up all 5 preload instances
       preloadHls.forEach((hls, i) => { if (hls) { hls.destroy(); preloadHls[i] = null; } });
       preloadEls.forEach((el) => { el.src = ''; });
     }
@@ -176,13 +176,12 @@
         videoEl.play().catch(() => {});
       });
 
-      // Preload N+1 immediately — user most likely swipes forward
+      // Preload next 3 and prev 2 immediately — no delay so they're buffered before user swipes
       preloadAt(modalVideos[modalIndex + 1], 0);
-      // Preload N+2 and prev after a short delay so current gets bandwidth first
-      setTimeout(() => {
-        preloadAt(modalVideos[modalIndex + 2], 1);
-        preloadAt(modalVideos[modalIndex - 1], 2);
-      }, 600);
+      preloadAt(modalVideos[modalIndex + 2], 1);
+      preloadAt(modalVideos[modalIndex + 3], 2);
+      preloadAt(modalVideos[modalIndex - 1], 3);
+      preloadAt(modalVideos[modalIndex - 2], 4);
 
       // Counter
       if (counter) counter.textContent = (modalIndex + 1) + ' / ' + modalVideos.length;
