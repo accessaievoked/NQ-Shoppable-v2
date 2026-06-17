@@ -146,7 +146,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return { error: "A video with this URL already exists in your store." };
   }
 
-  // ── Process video: HLS conversion + thumbnail extraction ─────────────────
+  // ── Process video: compress + HLS conversion + thumbnail extraction ────────
   let streamUrl: string | null = null;
   let thumbnailUrl: string | null = null;
   try {
@@ -155,9 +155,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       .replace(/[^a-z0-9]+/g, "-")
       .slice(0, 40);
     const baseKey = `${Date.now()}-${slug}`;
-    ({ streamUrl, thumbnailUrl } = await processVideo(videoUrl, baseKey));
+    const processed = await processVideo(videoUrl, baseKey);
+    streamUrl    = processed.streamUrl;
+    thumbnailUrl = processed.thumbnailUrl;
+    videoUrl     = processed.compressedUrl; // store compressed version, not the raw upload
   } catch (err) {
-    // Non-fatal — video still plays as MP4, just without HLS or thumbnail
+    // Non-fatal — video still plays as the original MP4, just without compression/HLS/thumbnail
     console.error("[Video] Processing failed, saving raw URL:", err);
   }
 
