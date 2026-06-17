@@ -257,9 +257,9 @@
       document.body.classList.add('nq-modal-open');
 
       // Build one slide per video
-      swiperWrapper.innerHTML = videos.map(() => `
+      swiperWrapper.innerHTML = videos.map((v) => `
         <div class="swiper-slide nq-video-slide nq-loading">
-          <video class="nq-slide-video" playsinline webkit-playsinline muted loop preload="none"></video>
+          <video class="nq-slide-video" playsinline webkit-playsinline muted loop preload="none" poster="${v.thumbnailUrl || ''}"></video>
           <div class="nq-video-loading"><div class="nq-spinner"></div></div>
         </div>
       `).join('');
