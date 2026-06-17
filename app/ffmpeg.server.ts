@@ -47,17 +47,17 @@ function extractFrame(inputPath: string, outPath: string, timeOffset = 1): Promi
 
 /**
  * Compresses a video to a web-optimised H.264 MP4.
- * - Scales down to max 720p height (won't upscale smaller videos)
- * - CRF 28 — good quality, small file (~5–15 MB for a 30s clip)
+ * - Scales down to max 1080p height (won't upscale smaller videos)
+ * - CRF 23 — standard web quality, visually sharp
  * - faststart — moov atom at the front so browsers can play before full download
  */
 function compressToMp4(inputPath: string, outPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     ffmpeg(inputPath)
       .outputOptions([
-        "-vf", "scale=-2:min(720\\,ih)",
+        "-vf", "scale=-2:min(1080\\,ih)",
         "-c:v", "libx264",
-        "-crf", "28",
+        "-crf", "23",
         "-preset", "fast",
         "-c:a", "aac",
         "-b:a", "128k",
