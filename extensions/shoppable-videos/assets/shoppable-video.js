@@ -161,10 +161,13 @@
       // Init nearby slides
       keepAlive.forEach((idx) => initSlideHls(idx));
 
-      // Play active, pause others
+      // Play active, pause others; set preload hints for Safari native HLS
       for (let i = 0; i < total; i++) {
         const videoEl = getSlideVideo(i);
         if (!videoEl) continue;
+        const dist = Math.abs(i - activeIndex);
+        // preload attribute only affects Safari (native HLS); HLS.js ignores it
+        videoEl.preload = dist === 0 ? 'auto' : dist <= 1 ? 'metadata' : 'none';
         if (i === activeIndex) {
           videoEl.muted = isMuted;
           if (videoEl.readyState >= 2) {
