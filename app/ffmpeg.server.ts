@@ -45,23 +45,34 @@ function extractFrame(inputPath: string, outPath: string, timeOffset = 1): Promi
   });
 }
 
-// compressToMp4 intentionally removed — skipping compression to test raw quality vs load time
-
 /**
- * Runs FFmpeg to convert an MP4 to HLS segments.
- * Outputs: playlist.m3u8 + segment000.ts, segment001.ts, ...
+ * Compresses an MP4 into a small, web-optimised reel clip — the same strategy
+ * Quinn uses (tiny progressive MP4, ~150–400 KB for a few-second clip).
+ *
+ * Key choices:
+ *  - libx264 re-encode (NOT -codec copy) so the file is actually small.
+ *  - scale longest-cap to 720px wide; vertical reels become ~720x1280.
+ *  - CRF 30 + veryfast = good quality at a tiny size. Raise CRF (32–34) for
+ *    even smaller files, lower it (26–28) for higher quality.
+ *  - -movflags +faststart moves the moov atom to the front so the browser can
+ *    start playback after the first few KB instead of downloading the whole file.
+ *  - yuv420p for universal browser/mobile compatibility.
  */
-function convertToHLS(inputPath: string, outputDir: string): Promise<void> {
+function compressToMp4(inputPath: string, outPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     ffmpeg(inputPath)
       .outputOptions([
-        "-codec: copy",       // copy streams — no re-encode, maximum speed
-        "-start_number 0",
-        "-hls_time 2",        // 2-second segments
-        "-hls_list_size 0",   // include all segments in playlist
-        "-f hls",
+        "-vf", "scale='min(720,iw)':-2", // cap width at 720, keep aspect, even height
+        "-c:v", "libx264",
+        "-profile:v", "main",
+        "-preset", "veryfast",
+        "-crf", "30",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "96k",
+        "-movflags", "+faststart",
       ])
-      .output(path.join(outputDir, "playlist.m3u8"))
+      .output(outPath)
       .on("end", () => resolve())
       .on("error", (err) => reject(err))
       .run();
@@ -69,64 +80,41 @@ function convertToHLS(inputPath: string, outputDir: string): Promise<void> {
 }
 
 /**
- * Uploads all files in a local directory to R2 under a given key prefix.
- */
-async function uploadDirToR2(localDir: string, r2Prefix: string): Promise<void> {
-  const files = await fs.readdir(localDir);
-  await Promise.all(
-    files.map(async (filename) => {
-      const buffer = await fs.readFile(path.join(localDir, filename));
-      const isPlaylist  = filename.endsWith(".m3u8");
-      const contentType = isPlaylist ? "application/vnd.apple.mpegurl" : "video/mp2t";
-      // Playlists may be regenerated, so short cache; segments are immutable
-      const cacheControl = isPlaylist
-        ? "public, max-age=60"
-        : "public, max-age=31536000, immutable";
-      await s3.send(
-        new PutObjectCommand({
-          Bucket: R2_BUCKET_NAME,
-          Key: `${r2Prefix}/${filename}`,
-          Body: buffer,
-          ContentType: contentType,
-          CacheControl: cacheControl,
-        })
-      );
-    })
-  );
-}
-
-/**
- * Given an MP4 URL, converts it to HLS, extracts a thumbnail frame,
- * uploads everything to R2, and returns both public URLs.
+ * Given an MP4 URL, compresses it into a small web-optimised MP4 (Quinn-style),
+ * extracts a thumbnail frame, uploads both to R2, and returns the public URLs.
+ *
+ * We no longer produce HLS: for short reel clips a single small progressive MP4
+ * (with +faststart + range support + long cache) starts faster and transitions
+ * more smoothly than HLS, which adds a per-video manifest/segment handshake.
+ * streamUrl is returned as null so the storefront plays the MP4 directly.
  *
  * @param mp4Url    Public R2 URL of the source MP4
  * @param baseKey   Base R2 key, e.g. "1234567890-my-product"
- *                  HLS → hls/{baseKey}/playlist.m3u8
- *                  Thumbnail → thumbnails/{baseKey}.webp
+ *                  Compressed MP4 → compressed/{baseKey}.mp4
+ *                  Thumbnail      → thumbnails/{baseKey}.webp
  */
 export async function processVideo(
   mp4Url: string,
   baseKey: string
-): Promise<{ compressedUrl: string; streamUrl: string; thumbnailUrl: string }> {
-  const tmpDir    = await fs.mkdtemp(path.join(os.tmpdir(), "nq-video-"));
-  const inputPath = path.join(tmpDir, "input.mp4");
-  const thumbPath = path.join(tmpDir, "thumbnail.webp");
-  const hlsDir    = path.join(tmpDir, "hls");
-  await fs.mkdir(hlsDir);
+): Promise<{ compressedUrl: string; streamUrl: string | null; thumbnailUrl: string }> {
+  const tmpDir         = await fs.mkdtemp(path.join(os.tmpdir(), "nq-video-"));
+  const inputPath      = path.join(tmpDir, "input.mp4");
+  const thumbPath      = path.join(tmpDir, "thumbnail.webp");
+  const compressedPath = path.join(tmpDir, "compressed.mp4");
 
   try {
     // 1. Download the original video
     console.log(`[Video] Downloading ${mp4Url}`);
     await downloadToTemp(mp4Url, inputPath);
 
-    // 2. Extract thumbnail & HLS directly from the original (no compression)
-    console.log(`[Video] Extracting thumbnail & converting to HLS`);
+    // 2. Extract thumbnail & compress to a small MP4 in parallel
+    console.log(`[Video] Extracting thumbnail & compressing to MP4`);
     await Promise.all([
       extractFrame(inputPath, thumbPath, 1),
-      convertToHLS(inputPath, hlsDir),
+      compressToMp4(inputPath, compressedPath),
     ]);
 
-    // 5. Upload thumbnail
+    // 3. Upload thumbnail (immutable, 1-year cache)
     const thumbBuffer = await fs.readFile(thumbPath);
     const thumbKey    = `thumbnails/${baseKey}.webp`;
     await s3.send(new PutObjectCommand({
@@ -137,15 +125,23 @@ export async function processVideo(
       CacheControl: "public, max-age=31536000, immutable",
     }));
 
-    // 6. Upload HLS chunks + playlist
-    const hlsKey = `hls/${baseKey}`;
-    await uploadDirToR2(hlsDir, hlsKey);
+    // 4. Upload compressed MP4 (immutable, 1-year cache; R2 serves range requests)
+    const mp4Buffer = await fs.readFile(compressedPath);
+    const mp4Key    = `compressed/${baseKey}.mp4`;
+    await s3.send(new PutObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: mp4Key,
+      Body: mp4Buffer,
+      ContentType: "video/mp4",
+      CacheControl: "public, max-age=31536000, immutable",
+    }));
 
-    const streamUrl    = `${R2_PUBLIC_URL}/${hlsKey}/playlist.m3u8`;
-    const thumbnailUrl = `${R2_PUBLIC_URL}/${thumbKey}`;
-    console.log(`[Video] Done — stream: ${streamUrl} | thumb: ${thumbnailUrl}`);
+    const compressedUrl = `${R2_PUBLIC_URL}/${mp4Key}`;
+    const thumbnailUrl  = `${R2_PUBLIC_URL}/${thumbKey}`;
+    const sizeKB        = Math.round(mp4Buffer.length / 1024);
+    console.log(`[Video] Done — mp4: ${compressedUrl} (${sizeKB} KB) | thumb: ${thumbnailUrl}`);
 
-    return { compressedUrl: mp4Url, streamUrl, thumbnailUrl };
+    return { compressedUrl, streamUrl: null, thumbnailUrl };
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true });
   }

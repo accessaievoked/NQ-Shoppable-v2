@@ -326,8 +326,10 @@ export default function Index() {
                     <span style={styles.viewsBadge}>
                       👁 {video.viewCount}
                     </span>
-                    {/* Processing badge — shown while FFmpeg runs in background */}
-                    {!video.streamUrl && (
+                    {/* Processing badge — shown while FFmpeg runs in background.
+                        Done is signalled by the thumbnail being set (streamUrl is
+                        now intentionally null since we serve compressed MP4, not HLS). */}
+                    {!video.thumbnailUrl && (
                       <div style={styles.processingBadge}>
                         ⏳ Processing…
                       </div>

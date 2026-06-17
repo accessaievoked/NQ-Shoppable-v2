@@ -110,12 +110,64 @@
     let swiperInstance = null;
     let slideHlsMap    = {};   // slide index → HLS instance
     let isMuted        = true;
-    const PRELOAD_RANGE = 2;   // keep HLS alive for 2 slides in each direction
+    // Clips are now small compressed MP4s, so we can keep a wide window buffered
+    // in each direction — this is what makes 2nd/3rd/… videos play instantly.
+    const PRELOAD_RANGE = 3;
 
     // ── Helpers ───────────────────────────────────────────────────────────
     function getSlideVideo(index) {
       const slide = swiperWrapper.children[index];
       return slide ? slide.querySelector('.nq-slide-video') : null;
+    }
+
+    // Reveal the video by fading it in OVER the thumbnail — only ever called
+    // once a real frame is actually painted (playing/loadeddata), never at
+    // MANIFEST_PARSED. This is what kills the black flash.
+    function revealSlide(index) {
+      const slide = swiperWrapper.children[index];
+      if (!slide) return;
+      slide.classList.remove('nq-loading');
+      const videoEl = slide.querySelector('.nq-slide-video');
+      if (videoEl) videoEl.classList.add('nq-playing');
+      const thumb = slide.querySelector('.nq-slide-thumb');
+      if (thumb) thumb.classList.add('nq-slide-thumb-hidden');
+    }
+
+    // Put a slide back to its thumbnail state (used when a slide goes idle or
+    // its buffer is freed) so revisiting it shows the thumbnail, never black.
+    function resetSlide(index) {
+      const slide = swiperWrapper.children[index];
+      if (!slide) return;
+      slide.classList.remove('nq-loading');
+      const videoEl = slide.querySelector('.nq-slide-video');
+      if (videoEl) videoEl.classList.remove('nq-playing');
+      const thumb = slide.querySelector('.nq-slide-thumb');
+      if (thumb) thumb.classList.remove('nq-slide-thumb-hidden');
+    }
+
+    // Play the active slide and reveal it the instant it has a real frame.
+    function playSlide(index) {
+      const videoEl = getSlideVideo(index);
+      if (!videoEl) return;
+      const slide = swiperWrapper.children[index];
+      videoEl.muted = isMuted;
+
+      const onFrame = () => {
+        if (swiperInstance && swiperInstance.activeIndex === index) revealSlide(index);
+      };
+
+      if (videoEl.readyState >= 2) {
+        // Already has a decoded frame — reveal immediately, no spinner.
+        videoEl.play().catch(() => {});
+        onFrame();
+      } else {
+        // Still buffering — keep the thumbnail up (with spinner) until the
+        // first frame is painted, then crossfade to video.
+        if (slide) slide.classList.add('nq-loading');
+        videoEl.addEventListener('playing', onFrame, { once: true });
+        videoEl.addEventListener('loadeddata', onFrame, { once: true });
+        videoEl.play().catch(() => {});
+      }
     }
 
     function initSlideHls(index) {
@@ -126,20 +178,14 @@
       if (!videoEl) return;
 
       const src   = v.streamUrl || v.videoUrl;
-      const isHls = !!(v.streamUrl);
+      const isHls  = !!(v.streamUrl);
+
+      // Buffer eagerly — small files, so this is cheap and makes swipes instant.
+      videoEl.preload = 'auto';
 
       const hls = attachStream(videoEl, src, isHls, () => {
-        // Stream ready — play if this is the active slide
-        if (swiperInstance && swiperInstance.activeIndex === index) {
-          videoEl.muted = isMuted;
-          videoEl.play().catch(() => {});
-          const slide = swiperWrapper.children[index];
-          if (slide) {
-            slide.classList.remove('nq-loading');
-            const thumb = slide.querySelector('.nq-slide-thumb');
-            if (thumb) thumb.classList.add('nq-slide-thumb-hidden');
-          }
-        }
+        // Source attached/ready — only auto-play if this is the active slide.
+        if (swiperInstance && swiperInstance.activeIndex === index) playSlide(index);
       });
       slideHlsMap[index] = hls || null;
     }
@@ -149,7 +195,12 @@
       if (hls) { hls.destroy(); }
       delete slideHlsMap[index];
       const videoEl = getSlideVideo(index);
-      if (videoEl) { videoEl.pause(); videoEl.src = ''; }
+      if (videoEl) {
+        videoEl.pause();
+        videoEl.removeAttribute('src');
+        try { videoEl.load(); } catch {}
+      }
+      resetSlide(index); // back to thumbnail so a later revisit isn't black
     }
 
     function manageSlides(activeIndex) {
@@ -158,34 +209,22 @@
       for (let i = Math.max(0, activeIndex - PRELOAD_RANGE); i <= Math.min(total - 1, activeIndex + PRELOAD_RANGE); i++) {
         keepAlive.add(i);
       }
-      // Destroy far slides
+      // Free slides outside the window (and reset them to thumbnail state)
       Object.keys(slideHlsMap).forEach((idx) => {
         if (!keepAlive.has(Number(idx))) destroySlideHls(Number(idx));
       });
-      // Init nearby slides
+      // Buffer everything inside the window — neighbours download while you watch
       keepAlive.forEach((idx) => initSlideHls(idx));
 
-      // Play active, pause others; set preload hints for Safari native HLS
+      // Play active, pause + show-thumbnail for the rest
       for (let i = 0; i < total; i++) {
         const videoEl = getSlideVideo(i);
         if (!videoEl) continue;
-        const dist = Math.abs(i - activeIndex);
-        // preload attribute only affects Safari (native HLS); HLS.js ignores it
-        videoEl.preload = dist === 0 ? 'auto' : dist <= 1 ? 'metadata' : 'none';
         if (i === activeIndex) {
-          videoEl.muted = isMuted;
-          if (videoEl.readyState >= 2) {
-            videoEl.play().catch(() => {});
-            const slide = swiperWrapper.children[i];
-            if (slide) {
-              slide.classList.remove('nq-loading');
-              const thumb = slide.querySelector('.nq-slide-thumb');
-              if (thumb) thumb.classList.add('nq-slide-thumb-hidden');
-            }
-          }
-          // else onReady callback will play it once stream is loaded
+          playSlide(i);
         } else {
           videoEl.pause();
+          resetSlide(i);
         }
       }
     }
@@ -270,8 +309,11 @@
       // Build one slide per video.
       // IMPORTANT: poster attribute is destroyed by HLS.js on attachMedia — do NOT rely on it.
       // Instead, use a separate <img> overlay (same pattern as carousel cards) that fades out on play.
+      // Slides start in their thumbnail state (no nq-loading). The spinner is
+      // only added by playSlide() while the ACTIVE video is still buffering,
+      // so idle/neighbour slides simply show their thumbnail.
       swiperWrapper.innerHTML = videos.map((v) => `
-        <div class="swiper-slide nq-video-slide nq-loading">
+        <div class="swiper-slide nq-video-slide">
           <video class="nq-slide-video" playsinline webkit-playsinline muted loop preload="none"></video>
           ${v.thumbnailUrl ? `<img class="nq-slide-thumb" src="${v.thumbnailUrl}" alt="">` : ''}
           <div class="nq-video-loading"><div class="nq-spinner"></div></div>

@@ -291,6 +291,15 @@
   height: 100%;
   object-fit: cover;
   display: block;
+  /* Start hidden and fade in only once a real frame is painted (.nq-playing).
+     The thumbnail (z-index:2) sits on top until then, so the opaque black
+     <video> element is never visible — no black flash. */
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+
+.nq-slide-video.nq-playing {
+  opacity: 1;
 }
 
 /* Thumbnail overlay — visible immediately, fades out when video plays.
