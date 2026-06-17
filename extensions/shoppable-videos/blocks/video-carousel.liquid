@@ -37,7 +37,7 @@
     {%- comment -%} Main box: video + product side by side {%- endcomment -%}
     <div class="nq-modal-main">
 
-      {%- comment -%} Video panel {%- endcomment -%}
+      {%- comment -%} Video panel — Swiper container, slides injected by JS {%- endcomment -%}
       <div class="nq-modal-video-panel">
         <button class="nq-close-btn" id="nq-close-btn" aria-label="Close video">
           <svg width="14" height="14" viewBox="0 0 18 18" fill="none">
@@ -47,13 +47,10 @@
 
         <div class="nq-counter" id="nq-counter">1</div>
 
-        <video
-          id="nq-video"
-          playsinline
-          webkit-playsinline
-          preload="metadata"
-          loop
-        ></video>
+        {%- comment -%} Swiper replaces the single <video> — JS fills swiper-wrapper with slides {%- endcomment -%}
+        <div class="swiper nq-video-swiper" id="nq-video-swiper">
+          <div class="swiper-wrapper" id="nq-swiper-wrapper"></div>
+        </div>
 
         <button class="nq-mute-btn" id="nq-mute-btn" aria-label="Toggle mute">
           <svg id="nq-icon-sound" width="18" height="18" viewBox="0 0 24 24" fill="white" style="display:none">
@@ -95,6 +92,7 @@
   </div>
 </div>
 
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css">
 {{ 'shoppable-video.css' | asset_url | stylesheet_tag }}
 <script src="{{ 'shoppable-video.js' | asset_url }}" defer></script>
 

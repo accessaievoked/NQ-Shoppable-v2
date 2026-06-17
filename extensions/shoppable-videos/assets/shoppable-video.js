@@ -9,7 +9,6 @@
   // ─── Modal singleton state ──────────────────────────────────────────
   let modalVideos = [];
   let modalIndex = 0;
-  let modalHls = null;
   let modalInitialized = false;
 
   // ─── Per-card HLS instances ─────────────────────────────────────────
@@ -30,6 +29,23 @@
       document.head.appendChild(script);
     });
     return hlsLoadPromise;
+  }
+
+  // ─── Swiper.js — loaded once, used by modal ──────────────────────────
+  let SwiperLib = null;
+  let swiperLoadPromise = null;
+
+  function loadSwiper() {
+    if (SwiperLib) return Promise.resolve(SwiperLib);
+    if (swiperLoadPromise) return swiperLoadPromise;
+    swiperLoadPromise = new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js';
+      script.onload = () => { SwiperLib = window.Swiper; resolve(SwiperLib); };
+      script.onerror = () => resolve(null);
+      document.head.appendChild(script);
+    });
+    return swiperLoadPromise;
   }
 
   // ─── Utility ────────────────────────────────────────────────────────
@@ -69,136 +85,115 @@
     return null;
   }
 
-  // ─── Modal ──────────────────────────────────────────────────────────
+  // ─── Modal (Swiper-powered) ──────────────────────────────────────────────
   function initModal() {
     if (modalInitialized) return;
     modalInitialized = true;
 
-    const modal     = document.getElementById('nq-modal');
-    const bg        = document.getElementById('nq-modal-bg');
-    const videoEl   = document.getElementById('nq-video');
-    const closeBtn  = document.getElementById('nq-close-btn');
-    const peekPrev    = document.getElementById('nq-peek-prev');
-    const peekNext    = document.getElementById('nq-peek-next');
-    const peekPrevImg = document.getElementById('nq-peek-prev-img');
-    const peekNextImg = document.getElementById('nq-peek-next-img');
-    const arrowPrev   = document.getElementById('nq-arrow-prev');
-    const arrowNext   = document.getElementById('nq-arrow-next');
-    const prevBtn     = document.getElementById('nq-prev-btn');
-    const nextBtn     = document.getElementById('nq-next-btn');
-    const counter     = document.getElementById('nq-counter');
-    const muteBtn     = document.getElementById('nq-mute-btn');
-    const iconSound = document.getElementById('nq-icon-sound');
-    const iconMuted = document.getElementById('nq-icon-muted');
+    const modal        = document.getElementById('nq-modal');
+    const bg           = document.getElementById('nq-modal-bg');
+    const closeBtn     = document.getElementById('nq-close-btn');
+    const counter      = document.getElementById('nq-counter');
+    const muteBtn      = document.getElementById('nq-mute-btn');
+    const iconSound    = document.getElementById('nq-icon-sound');
+    const iconMuted    = document.getElementById('nq-icon-muted');
+    const peekPrev     = document.getElementById('nq-peek-prev');
+    const peekNext     = document.getElementById('nq-peek-next');
+    const peekPrevImg  = document.getElementById('nq-peek-prev-img');
+    const peekNextImg  = document.getElementById('nq-peek-next-img');
+    const arrowPrev    = document.getElementById('nq-arrow-prev');
+    const arrowNext    = document.getElementById('nq-arrow-next');
+    const swiperWrapper = document.getElementById('nq-swiper-wrapper');
 
-    if (!modal) return;
+    if (!modal || !swiperWrapper) return;
 
-    // ── Loading overlay ──────────────────────────────────────────────
-    const videoPanel = modal.querySelector('.nq-modal-video-panel');
-    if (videoPanel) {
-      const loadingOverlay = document.createElement('div');
-      loadingOverlay.className = 'nq-video-loading';
-      loadingOverlay.innerHTML = '<div class="nq-spinner"></div>';
-      videoPanel.appendChild(loadingOverlay);
+    let swiperInstance = null;
+    let slideHlsMap    = {};   // slide index → HLS instance
+    let isMuted        = true;
+    const PRELOAD_RANGE = 2;   // keep HLS alive for 2 slides in each direction
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+    function getSlideVideo(index) {
+      const slide = swiperWrapper.children[index];
+      return slide ? slide.querySelector('.nq-slide-video') : null;
     }
 
-    // ── Hidden elements for preloading up to 3 videos ahead + 2 behind ─────────
-    const preloadEls = [0, 1, 2, 3, 4].map(() => {
-      const el = document.createElement('video');
-      el.muted = true;
-      el.style.cssText = 'display:none;position:absolute;pointer-events:none;';
-      document.body.appendChild(el);
-      return el;
-    });
-    // slots: 0 = N+1, 1 = N+2, 2 = N+3, 3 = N-1, 4 = N-2
-    let preloadHls = [null, null, null, null, null];
-
-    function preloadAt(v, slotIndex) {
-      if (preloadHls[slotIndex]) { preloadHls[slotIndex].destroy(); preloadHls[slotIndex] = null; }
-      const el = preloadEls[slotIndex];
-      el.src = '';
+    function initSlideHls(index) {
+      if (slideHlsMap[index] !== undefined) return; // already init'd (or null for MP4)
+      const v = modalVideos[index];
       if (!v) return;
-      const src   = v.streamUrl || v.videoUrl;
-      const isHls = !!(v.streamUrl);
-      preloadHls[slotIndex] = attachStream(el, src, isHls, () => { el.pause(); });
-    }
+      const videoEl = getSlideVideo(index);
+      if (!videoEl) return;
 
-    function openModal(videos, index) {
-      modalVideos = videos;
-      modalIndex  = index;
-      modal.style.display = 'flex';
-      document.body.style.overflow = 'hidden';
-      document.body.classList.add('nq-modal-open');
-      renderModalVideo();
-    }
-
-    function closeModal() {
-      modal.style.display = 'none';
-      document.body.style.overflow = '';
-      document.body.classList.remove('nq-modal-open');
-      videoEl.pause();
-      videoEl.src = '';
-      if (modalHls) { modalHls.destroy(); modalHls = null; }
-      // Clean up all 5 preload instances
-      preloadHls.forEach((hls, i) => { if (hls) { hls.destroy(); preloadHls[i] = null; } });
-      preloadEls.forEach((el) => { el.src = ''; });
-    }
-
-    function renderModalVideo() {
-      const v = modalVideos[modalIndex];
-      if (!v) return;
-
-      // Show loading spinner
-      const vPanel = modal.querySelector('.nq-modal-video-panel');
-      if (vPanel) vPanel.classList.add('nq-loading');
-
-      // Hide spinner once video is actually playing
-      const hideLoading = () => {
-        if (vPanel) vPanel.classList.remove('nq-loading');
-        videoEl.removeEventListener('playing', hideLoading);
-      };
-      videoEl.addEventListener('playing', hideLoading);
-
-      // Stop previous
-      videoEl.pause();
-      videoEl.src = '';
-      if (modalHls) { modalHls.destroy(); modalHls = null; }
-
-      videoEl.muted = true;
-      iconMuted.style.display = 'block';
-      iconSound.style.display = 'none';
-
-      // Prefer HLS stream, fall back to MP4
       const src   = v.streamUrl || v.videoUrl;
       const isHls = !!(v.streamUrl);
 
-      modalHls = attachStream(videoEl, src, isHls, () => {
-        videoEl.play().catch(() => {});
+      const hls = attachStream(videoEl, src, isHls, () => {
+        // Stream ready — play if this is the active slide
+        if (swiperInstance && swiperInstance.activeIndex === index) {
+          videoEl.muted = isMuted;
+          videoEl.play().catch(() => {});
+          const slide = swiperWrapper.children[index];
+          if (slide) slide.classList.remove('nq-loading');
+        }
       });
+      slideHlsMap[index] = hls || null;
+    }
 
-      // Preload next 3 and prev 2 immediately — no delay so they're buffered before user swipes
-      preloadAt(modalVideos[modalIndex + 1], 0);
-      preloadAt(modalVideos[modalIndex + 2], 1);
-      preloadAt(modalVideos[modalIndex + 3], 2);
-      preloadAt(modalVideos[modalIndex - 1], 3);
-      preloadAt(modalVideos[modalIndex - 2], 4);
+    function destroySlideHls(index) {
+      const hls = slideHlsMap[index];
+      if (hls) { hls.destroy(); }
+      delete slideHlsMap[index];
+      const videoEl = getSlideVideo(index);
+      if (videoEl) { videoEl.pause(); videoEl.src = ''; }
+    }
 
-      // Counter
-      if (counter) counter.textContent = (modalIndex + 1) + ' / ' + modalVideos.length;
+    function manageSlides(activeIndex) {
+      const total = modalVideos.length;
+      const keepAlive = new Set();
+      for (let i = Math.max(0, activeIndex - PRELOAD_RANGE); i <= Math.min(total - 1, activeIndex + PRELOAD_RANGE); i++) {
+        keepAlive.add(i);
+      }
+      // Destroy far slides
+      Object.keys(slideHlsMap).forEach((idx) => {
+        if (!keepAlive.has(Number(idx))) destroySlideHls(Number(idx));
+      });
+      // Init nearby slides
+      keepAlive.forEach((idx) => initSlideHls(idx));
 
-      // Peek prev + desktop arrow
-      const prevV = modalVideos[modalIndex - 1];
-      if (peekPrev) peekPrev.dataset.hidden = prevV ? 'false' : 'true';
+      // Play active, pause others
+      for (let i = 0; i < total; i++) {
+        const videoEl = getSlideVideo(i);
+        if (!videoEl) continue;
+        if (i === activeIndex) {
+          videoEl.muted = isMuted;
+          if (videoEl.readyState >= 2) {
+            videoEl.play().catch(() => {});
+            const slide = swiperWrapper.children[i];
+            if (slide) slide.classList.remove('nq-loading');
+          }
+          // else onReady callback will play it once stream is loaded
+        } else {
+          videoEl.pause();
+        }
+      }
+    }
+
+    function updateUI(index) {
+      const v = modalVideos[index];
+      if (!v) return;
+
+      if (counter) counter.textContent = (index + 1) + ' / ' + modalVideos.length;
+
+      const prevV = modalVideos[index - 1];
+      const nextV = modalVideos[index + 1];
+      if (peekPrev)    peekPrev.dataset.hidden    = prevV ? 'false' : 'true';
       if (peekPrevImg && prevV) { peekPrevImg.src = prevV.thumbnailUrl || ''; peekPrevImg.alt = prevV.productTitle || ''; }
-      if (arrowPrev) arrowPrev.dataset.hidden = prevV ? 'false' : 'true';
-
-      // Peek next + desktop arrow
-      const nextV = modalVideos[modalIndex + 1];
-      if (peekNext) peekNext.dataset.hidden = nextV ? 'false' : 'true';
+      if (arrowPrev)   arrowPrev.dataset.hidden   = prevV ? 'false' : 'true';
+      if (peekNext)    peekNext.dataset.hidden    = nextV ? 'false' : 'true';
       if (peekNextImg && nextV) { peekNextImg.src = nextV.thumbnailUrl || ''; peekNextImg.alt = nextV.productTitle || ''; }
-      if (arrowNext) arrowNext.dataset.hidden = nextV ? 'false' : 'true';
+      if (arrowNext)   arrowNext.dataset.hidden   = nextV ? 'false' : 'true';
 
-      // Product panel
       const card = document.getElementById('nq-product-card');
       if (!card) return;
 
@@ -208,8 +203,6 @@
 
       card.innerHTML = `
         <div class="nq-product-inner">
-
-          <!-- Mobile compact bar (shown on mobile, hidden on desktop) -->
           <div class="nq-mobile-bar">
             ${v.productImageUrl ? `<img class="nq-mobile-thumb" src="${v.productImageUrl}" alt="${v.productTitle || ''}" loading="lazy">` : ''}
             <div class="nq-mobile-info">
@@ -221,8 +214,6 @@
             </div>
             ${v.productUrl ? `<a class="nq-mobile-shop" href="${v.productUrl}">Shop Now</a>` : ''}
           </div>
-
-          <!-- Desktop full layout -->
           ${v.productImageUrl
             ? `<img class="nq-product-img-full" src="${v.productImageUrl}" alt="${v.productTitle || ''}" loading="lazy">`
             : '<div class="nq-product-img-placeholder"></div>'}
@@ -250,81 +241,87 @@
         </div>
       `;
 
-      // Update mobile cart button href
       const mobileCartBtn = document.getElementById('nq-mobile-cart');
       if (mobileCartBtn) {
-        if (v.variantId) {
-          mobileCartBtn.href = `/cart/${v.variantId}:1?checkout`;
-          mobileCartBtn.style.display = 'flex';
-        } else {
-          mobileCartBtn.style.display = 'none';
-        }
+        mobileCartBtn.href         = v.variantId ? `/cart/${v.variantId}:1?checkout` : '#';
+        mobileCartBtn.style.display = v.variantId ? 'flex' : 'none';
       }
     }
 
-    // ── Event listeners ──────────────────────────────────────────────
+    // ── Open / Close ──────────────────────────────────────────────────────
+    function openModal(videos, index) {
+      modalVideos = videos;
+      modalIndex  = index;
+      modal.style.display = 'flex';
+      document.body.style.overflow = 'hidden';
+      document.body.classList.add('nq-modal-open');
+
+      // Build one slide per video
+      swiperWrapper.innerHTML = videos.map(() => `
+        <div class="swiper-slide nq-video-slide nq-loading">
+          <video class="nq-slide-video" playsinline webkit-playsinline muted loop preload="none"></video>
+          <div class="nq-video-loading"><div class="nq-spinner"></div></div>
+        </div>
+      `).join('');
+
+      // Init Swiper (loads from CDN on first open)
+      loadSwiper().then((Swiper) => {
+        if (!Swiper) return;
+        swiperInstance = new Swiper('#nq-video-swiper', {
+          direction: 'vertical',
+          speed: 280,
+          initialSlide: index,
+          grabCursor: true,
+          resistanceRatio: 0.6,
+          on: {
+            slideChange: () => {
+              modalIndex = swiperInstance.activeIndex;
+              updateUI(modalIndex);
+              manageSlides(modalIndex);
+              // Sync mute icon
+              iconMuted.style.display = isMuted ? 'block' : 'none';
+              iconSound.style.display  = isMuted ? 'none'  : 'block';
+            },
+          },
+        });
+        updateUI(index);
+        manageSlides(index);
+      });
+    }
+
+    function closeModal() {
+      modal.style.display = 'none';
+      document.body.style.overflow = '';
+      document.body.classList.remove('nq-modal-open');
+      Object.keys(slideHlsMap).forEach((idx) => destroySlideHls(Number(idx)));
+      slideHlsMap = {};
+      if (swiperInstance) { swiperInstance.destroy(true, true); swiperInstance = null; }
+      swiperWrapper.innerHTML = '';
+    }
+
+    // ── Event listeners ──────────────────────────────────────────────────
     bg.addEventListener('click', closeModal);
     closeBtn.addEventListener('click', closeModal);
 
-    if (peekPrev) peekPrev.addEventListener('click', () => {
-      if (modalIndex > 0) { modalIndex--; renderModalVideo(); }
-    });
-
-    if (peekNext) peekNext.addEventListener('click', () => {
-      if (modalIndex < modalVideos.length - 1) { modalIndex++; renderModalVideo(); }
-    });
-
-    // Mobile nav arrows
-    if (prevBtn) prevBtn.addEventListener('click', () => {
-      if (modalIndex > 0) { modalIndex--; renderModalVideo(); }
-    });
-
-    if (nextBtn) nextBtn.addEventListener('click', () => {
-      if (modalIndex < modalVideos.length - 1) { modalIndex++; renderModalVideo(); }
-    });
-
-    // Desktop far-edge arrows
-    if (arrowPrev) arrowPrev.addEventListener('click', () => {
-      if (modalIndex > 0) { modalIndex--; renderModalVideo(); }
-    });
-
-    if (arrowNext) arrowNext.addEventListener('click', () => {
-      if (modalIndex < modalVideos.length - 1) { modalIndex++; renderModalVideo(); }
-    });
+    if (peekPrev)  peekPrev.addEventListener('click',  () => swiperInstance?.slidePrev());
+    if (peekNext)  peekNext.addEventListener('click',  () => swiperInstance?.slideNext());
+    if (arrowPrev) arrowPrev.addEventListener('click', () => swiperInstance?.slidePrev());
+    if (arrowNext) arrowNext.addEventListener('click', () => swiperInstance?.slideNext());
 
     muteBtn.addEventListener('click', () => {
-      videoEl.muted = !videoEl.muted;
-      iconMuted.style.display = videoEl.muted ? 'block' : 'none';
-      iconSound.style.display = videoEl.muted ? 'none' : 'block';
+      isMuted = !isMuted;
+      iconMuted.style.display = isMuted ? 'block' : 'none';
+      iconSound.style.display  = isMuted ? 'none'  : 'block';
+      const activeVideo = getSlideVideo(swiperInstance?.activeIndex ?? 0);
+      if (activeVideo) activeVideo.muted = isMuted;
     });
 
     document.addEventListener('keydown', (e) => {
-      if (modal.style.display === 'none') return;
-      if (e.key === 'Escape')      closeModal();
-      if (e.key === 'ArrowLeft'  && modalIndex > 0)                      { modalIndex--; renderModalVideo(); }
-      if (e.key === 'ArrowRight' && modalIndex < modalVideos.length - 1) { modalIndex++; renderModalVideo(); }
+      if (modal.style.display === 'none' || !swiperInstance) return;
+      if (e.key === 'Escape')     closeModal();
+      if (e.key === 'ArrowUp'   || e.key === 'ArrowLeft')  swiperInstance.slidePrev();
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') swiperInstance.slideNext();
     });
-
-    let touchStartX = 0, touchStartY = 0;
-    const modalLayout = modal.querySelector('.nq-modal-layout');
-    if (modalLayout) {
-      modalLayout.addEventListener('touchstart', (e) => {
-        touchStartX = e.touches[0].clientX;
-        touchStartY = e.touches[0].clientY;
-      }, { passive: true });
-      modalLayout.addEventListener('touchend', (e) => {
-        const diffX = touchStartX - e.changedTouches[0].clientX;
-        const diffY = touchStartY - e.changedTouches[0].clientY;
-        // Prefer vertical swipe on mobile (up = next, down = prev)
-        if (Math.abs(diffY) > Math.abs(diffX) && Math.abs(diffY) > 50) {
-          if (diffY > 0 && modalIndex < modalVideos.length - 1) { modalIndex++; renderModalVideo(); }
-          if (diffY < 0 && modalIndex > 0)                      { modalIndex--; renderModalVideo(); }
-        } else if (Math.abs(diffX) > 40) {
-          if (diffX > 0 && modalIndex < modalVideos.length - 1) { modalIndex++; renderModalVideo(); }
-          if (diffX < 0 && modalIndex > 0)                      { modalIndex--; renderModalVideo(); }
-        }
-      });
-    }
 
     window._nqOpenModal = openModal;
   }

@@ -272,7 +272,21 @@
   overflow: hidden;
 }
 
-#nq-video {
+/* ─── Swiper inside video panel ──────────────────────────────────── */
+.nq-video-swiper {
+  width: 100%;
+  height: 100%;
+}
+
+.nq-video-slide {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+}
+
+.nq-slide-video {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -668,7 +682,7 @@ body.nq-modal-open #shopify-section-header {
   transition: opacity 0.15s;
 }
 
-.nq-modal-video-panel.nq-loading .nq-video-loading {
+.nq-video-slide.nq-loading .nq-video-loading {
   opacity: 1;
 }
 
