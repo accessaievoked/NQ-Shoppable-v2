@@ -357,8 +357,16 @@
       if (!videoEl || cardHlsMap.has(videoEl)) return;
       const src   = videoEl.dataset.src;
       const isHls = videoEl.dataset.hls === 'true';
-      // Attach stream immediately — fetches manifest + first segment into browser cache
-      const hls = attachStream(videoEl, src, isHls, () => { videoEl.pause(); });
+      // Attach stream and play immediately — first card should autoplay on page load
+      const hls = attachStream(videoEl, src, isHls, () => {
+        videoEl.play()
+          .then(() => {
+            videoEl.classList.add('nq-playing');
+            const thumb = firstCard.querySelector('.nq-thumb');
+            if (thumb) thumb.classList.add('nq-hidden');
+          })
+          .catch(() => {});
+      });
       if (hls) cardHlsMap.set(videoEl, hls);
     }
 
@@ -450,6 +458,11 @@
 
       const track = this.container.querySelector('.nq-carousel-track');
 
+      // Tracks which cards the play observer wants playing.
+      // When a stream finishes loading, onReady checks this set and plays immediately
+      // if the card was already in view — fixes the race between stream load and observer.
+      const shouldPlay = new Set();
+
       // Stage 1 — preload: start buffering when card is 10% visible
       this.preloadObserver = new IntersectionObserver((entries) => {
         entries.forEach((entry) => {
@@ -462,11 +475,21 @@
 
             const src   = videoEl.dataset.src;
             const isHls = videoEl.dataset.hls === 'true';
+            const card  = entry.target;
 
-            // Attach stream but don't play yet — just pre-fetch manifest + first segment
+            // Attach stream; when ready, play if the play observer already flagged this card
             const hls = attachStream(videoEl, src, isHls, () => {
-              // onReady: pause immediately, play observer will call play() when centered
-              videoEl.pause();
+              if (shouldPlay.has(card)) {
+                videoEl.play()
+                  .then(() => {
+                    videoEl.classList.add('nq-playing');
+                    const thumb = card.querySelector('.nq-thumb');
+                    if (thumb) thumb.classList.add('nq-hidden');
+                  })
+                  .catch(() => {});
+              } else {
+                videoEl.pause();
+              }
             });
 
             if (hls) cardHlsMap.set(videoEl, hls);
@@ -498,6 +521,9 @@
           if (!videoEl) return;
 
           if (entry.isIntersecting) {
+            shouldPlay.add(card);
+            // Try play now — succeeds if stream already loaded, otherwise
+            // preloadObserver's onReady will pick it up via shouldPlay
             videoEl.play()
               .then(() => {
                 videoEl.classList.add('nq-playing');
@@ -505,6 +531,7 @@
               })
               .catch(() => {});
           } else {
+            shouldPlay.delete(card);
             videoEl.pause();
             videoEl.classList.remove('nq-playing');
             if (thumb) thumb.classList.remove('nq-hidden');
