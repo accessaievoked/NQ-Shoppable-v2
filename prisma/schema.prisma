@@ -1,0 +1,72 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Video {
+  id              String   @id @default(cuid())
+  shop            String
+  title           String   @default("")
+  // Storage
+  videoUrl        String   // Original MP4 URL in R2
+  streamUrl       String?  // HLS .m3u8 playlist URL (null until converted)
+  thumbnailUrl    String   @default("")
+  duration        Int?     // seconds
+  // Product link
+  productId       String   @default("")
+  variantId       String   @default("")
+  productTitle    String   @default("")
+  productUrl      String   @default("")
+  productImageUrl String   @default("")
+  price           Float?
+  compareAtPrice  Float?
+  currency        String   @default("INR")
+  // Settings
+  active          Boolean  @default(true)
+  sortOrder       Int      @default(0)
+  // Analytics
+  viewCount       Int      @default(0)
+  atcCount        Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model AnalyticsEvent {
+  id        String   @id @default(cuid())
+  shop      String
+  videoId   String
+  type      String   // "VIEW" | "ATC"
+  createdAt DateTime @default(now())
+
+  @@index([shop, type, createdAt])
+}
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
