@@ -14,7 +14,7 @@ import { useState, useRef, useEffect } from "react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
-import { uploadToR2 } from "../r2.server";
+import { uploadToR2, deleteFromR2ByUrl } from "../r2.server";
 import { processVideo } from "../ffmpeg.server";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -184,6 +184,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           thumbnailUrl: processed.thumbnailUrl,
         },
       });
+
+      // Clean up the raw original now that the compressed copy is saved — but
+      // only if WE uploaded it (not an admin-pasted URL) and it's actually a
+      // different object than the compressed result. Done after the DB update
+      // so videoUrl never points at a deleted file.
+      if (hasFile && videoUrl && videoUrl !== processed.compressedUrl) {
+        try {
+          await deleteFromR2ByUrl(videoUrl);
+          console.log(`[Video] Deleted raw original for video ${video.id}`);
+        } catch (cleanupErr) {
+          console.warn(`[Video] Could not delete raw original for video ${video.id}:`, cleanupErr);
+        }
+      }
+
       console.log(`[Video] Background processing complete for video ${video.id}`);
     })
     .catch((err) => {

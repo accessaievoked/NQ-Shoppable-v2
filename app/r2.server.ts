@@ -59,6 +59,17 @@ function urlToKey(url: string): string | null {
 }
 
 /**
+ * Deletes a single R2 object given its public URL.
+ * No-op if the URL isn't inside our bucket. Used to remove the raw original
+ * upload after it has been compressed, so we don't store two copies.
+ */
+export async function deleteFromR2ByUrl(url: string): Promise<void> {
+  const key = urlToKey(url);
+  if (!key) return;
+  await s3.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }));
+}
+
+/**
  * Deletes all objects under a given prefix (e.g. "hls/my-video/").
  */
 async function deletePrefix(prefix: string): Promise<void> {
