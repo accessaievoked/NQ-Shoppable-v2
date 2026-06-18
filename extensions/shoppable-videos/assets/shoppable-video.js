@@ -85,6 +85,28 @@
     return null;
   }
 
+  // ─── Carousel video suspension ──────────────────────────────────────────
+  // While the modal is open the carousel is hidden behind it, but its videos
+  // keep playing/buffering and compete for the browser's limited connections
+  // to the video host. Pause them on open, resume the visible ones on close.
+  function pauseCarouselVideos() {
+    document.querySelectorAll('.nq-shoppable-carousel .nq-inline-video').forEach((v) => {
+      try { v.pause(); } catch (e) {}
+    });
+  }
+
+  function resumeCarouselVideos() {
+    const vh = window.innerHeight || 800;
+    document.querySelectorAll('.nq-shoppable-carousel .nq-inline-video').forEach((v) => {
+      const r = v.getBoundingClientRect();
+      const visible = r.width > 0 && r.bottom > 0 && r.top < vh;
+      // Only resume cards that were actually playing and are still on screen.
+      if (visible && (v.getAttribute('src') || v.src) && v.classList.contains('nq-playing')) {
+        v.play().catch(() => {});
+      }
+    });
+  }
+
   // ─── Modal (Swiper-powered) ──────────────────────────────────────────────
   function initModal() {
     if (modalInitialized) return;
@@ -110,11 +132,20 @@
     let swiperInstance = null;
     let slideHlsMap    = {};   // slide index → HLS instance
     let isMuted        = true;
-    // Clips are now small compressed MP4s, so we can keep a wide window buffered
-    // in each direction — this is what makes 2nd/3rd/… videos play instantly.
-    const PRELOAD_RANGE = 3;
+    // Only keep the active slide + immediate neighbours loaded. A wider window
+    // oversubscribes the browser's limited connections to the R2 host (which
+    // isn't HTTP/2-multiplexed like Shopify's CDN), causing every <video> to
+    // deadlock at readyState 0 after an open/close cycle. 1 = active + next +
+    // prev, which still keeps the next video instant without the deadlock.
+    const PRELOAD_RANGE = 1;
 
     // ── Helpers ───────────────────────────────────────────────────────────
+    // Desktop (>700px) slides left/right; mobile (<=700px) stays a vertical
+    // TikTok-style reel. 700px matches the CSS mobile breakpoint.
+    function getModalDirection() {
+      return window.matchMedia('(max-width: 700px)').matches ? 'vertical' : 'horizontal';
+    }
+
     function getSlideVideo(index) {
       const slide = swiperWrapper.children[index];
       return slide ? slide.querySelector('.nq-slide-video') : null;
@@ -306,6 +337,9 @@
       document.body.style.overflow = 'hidden';
       document.body.classList.add('nq-modal-open');
 
+      // Free up connections for the modal videos.
+      pauseCarouselVideos();
+
       // Build one slide per video.
       // IMPORTANT: poster attribute is destroyed by HLS.js on attachMedia — do NOT rely on it.
       // Instead, use a separate <img> overlay (same pattern as carousel cards) that fades out on play.
@@ -324,7 +358,7 @@
       loadSwiper().then((Swiper) => {
         if (!Swiper) return;
         swiperInstance = new Swiper('#nq-video-swiper', {
-          direction: 'vertical',
+          direction: getModalDirection(),
           speed: 280,
           initialSlide: index,
           grabCursor: true,
@@ -356,6 +390,9 @@
       slideHlsMap = {};
       if (swiperInstance) { swiperInstance.destroy(true, true); swiperInstance = null; }
       swiperWrapper.innerHTML = '';
+
+      // Resume the carousel now that the modal's videos are gone.
+      resumeCarouselVideos();
     }
 
     // ── Event listeners ──────────────────────────────────────────────────
@@ -380,6 +417,20 @@
       if (e.key === 'Escape')     closeModal();
       if (e.key === 'ArrowUp'   || e.key === 'ArrowLeft')  swiperInstance.slidePrev();
       if (e.key === 'ArrowDown' || e.key === 'ArrowRight') swiperInstance.slideNext();
+    });
+
+    // Keep the slide direction in sync with viewport size (e.g. window resize
+    // or tablet rotation crossing the 700px breakpoint).
+    let _nqDirRaf;
+    window.addEventListener('resize', () => {
+      if (!swiperInstance) return;
+      cancelAnimationFrame(_nqDirRaf);
+      _nqDirRaf = requestAnimationFrame(() => {
+        const want = getModalDirection();
+        if (swiperInstance && swiperInstance.params.direction !== want) {
+          swiperInstance.changeDirection(want);
+        }
+      });
     });
 
     window._nqOpenModal = openModal;
