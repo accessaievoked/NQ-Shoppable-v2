@@ -130,13 +130,13 @@
     if (!modal || !swiperWrapper) return;
 
     let swiperInstance = null;
-    let slideHlsMap    = {};   // slide index → HLS instance
+    let slotMap        = {};   // slideIndex → { video, hls } currently mounted
+    let videoPool      = [];   // small set of reusable <video> elements (created once)
     let isMuted        = true;
-    // Only keep the active slide + immediate neighbours loaded. A wider window
-    // oversubscribes the browser's limited connections to the R2 host (which
-    // isn't HTTP/2-multiplexed like Shopify's CDN), causing every <video> to
-    // deadlock at readyState 0 after an open/close cycle. 1 = active + next +
-    // prev, which still keeps the next video instant without the deadlock.
+    // Only the active slide + immediate neighbours get a real <video>. Browsers
+    // cap the number of media players per page and connections per origin, so we
+    // never create one <video> per library item — we recycle a tiny pool.
+    // PRELOAD_RANGE 1 = active + next + prev, which keeps the next video instant.
     const PRELOAD_RANGE = 1;
 
     // ── Helpers ───────────────────────────────────────────────────────────
@@ -170,10 +170,19 @@
       const slide = swiperWrapper.children[index];
       if (!slide) return;
       slide.classList.remove('nq-loading');
+      slide.classList.remove('nq-paused');
       const videoEl = slide.querySelector('.nq-slide-video');
       if (videoEl) videoEl.classList.remove('nq-playing');
       const thumb = slide.querySelector('.nq-slide-thumb');
       if (thumb) thumb.classList.remove('nq-slide-thumb-hidden');
+    }
+
+    // Show/hide the tap-to-play button on a slide. The play overlay is the
+    // reliable fallback for whenever autoplay is blocked or the video is paused
+    // — the user can always tap to start it (the approach Quinn relies on).
+    function setSlidePaused(index, isPaused) {
+      const slide = swiperWrapper.children[index];
+      if (slide) slide.classList.toggle('nq-paused', isPaused);
     }
 
     // Play the active slide and reveal it the instant it has a real frame.
@@ -188,7 +197,12 @@
       const tryPlay = () => {
         if (!stillActive()) return;
         const p = videoEl.play();
-        if (p && p.catch) p.catch(() => {}); // ignore AbortError; we retry on ready
+        if (p && p.then) {
+          // Success → hide the play button. Failure (AbortError mid-load, or
+          // autoplay blocked) → show the play button so a tap can start it.
+          p.then(() => setSlidePaused(index, false))
+           .catch(() => { if (videoEl.paused) setSlidePaused(index, true); });
+        }
       };
 
       // Reveal once a real frame exists, AND retry play() if it's still paused.
@@ -215,65 +229,100 @@
       }
     }
 
-    function initSlideHls(index) {
-      if (slideHlsMap[index] !== undefined) return; // already init'd (or null for MP4)
-      const v = modalVideos[index];
-      if (!v) return;
-      const videoEl = getSlideVideo(index);
-      if (!videoEl) return;
+    // ── Virtualised video pool ──────────────────────────────────────────────
+    // Browsers cap how many <video> players a page can have, and how many
+    // connections an origin allows. So instead of one <video> per library item,
+    // we keep a tiny pool of reusable elements and mount them into the active
+    // slide + its neighbours, re-pointing the source as the user navigates. The
+    // number of media players stays at POOL_SIZE no matter how big the library
+    // is or how many times the modal is opened — which removes the ceiling that
+    // caused videos to stall at readyState 0 / freeze the tab.
+    const POOL_SIZE = 3; // must be >= 2 * PRELOAD_RANGE + 1
 
-      const src   = v.streamUrl || v.videoUrl;
-      const isHls  = !!(v.streamUrl);
-
-      // Buffer eagerly — small files, so this is cheap and makes swipes instant.
-      videoEl.preload = 'auto';
-
-      const hls = attachStream(videoEl, src, isHls, () => {
-        // Source attached. Playback for the active slide is driven by
-        // manageSlides()/playSlide() (which retries on canplay), so we do NOT
-        // call play() here — a second play() call abuts the first and both
-        // reject with AbortError, leaving the video paused.
-      });
-      slideHlsMap[index] = hls || null;
+    function currentSlideIndexOf(video) {
+      const slide = video.closest('.nq-video-slide');
+      return slide ? Array.prototype.indexOf.call(swiperWrapper.children, slide) : -1;
     }
 
-    function destroySlideHls(index) {
-      const hls = slideHlsMap[index];
-      if (hls) { hls.destroy(); }
-      delete slideHlsMap[index];
-      const videoEl = getSlideVideo(index);
-      if (videoEl) {
-        videoEl.pause();
-        videoEl.removeAttribute('src');
-        try { videoEl.load(); } catch {}
+    function buildPool() {
+      if (videoPool.length) return;
+      for (let i = 0; i < POOL_SIZE; i++) {
+        const v = document.createElement('video');
+        v.className = 'nq-slide-video';
+        v.muted = true;
+        v.loop = true;
+        v.setAttribute('playsinline', '');
+        v.setAttribute('webkit-playsinline', '');
+        v.setAttribute('muted', '');
+        v.preload = 'auto';
+        // Tap-to-play button stays in sync with whichever slide this video is in.
+        v.addEventListener('play',  () => { const i = currentSlideIndexOf(v); if (i >= 0) setSlidePaused(i, false); });
+        v.addEventListener('pause', () => { const i = currentSlideIndexOf(v); if (!v.ended && i >= 0 && swiperInstance && swiperInstance.activeIndex === i) setSlidePaused(i, true); });
+        videoPool.push(v);
       }
-      resetSlide(index); // back to thumbnail so a later revisit isn't black
+    }
+
+    function freePoolVideo() {
+      const used = new Set(Object.values(slotMap).map((s) => s.video));
+      return videoPool.find((v) => !used.has(v)) || null;
+    }
+
+    // Mount a reused <video> into a slide and point it at that slide's source.
+    function assignSlot(index) {
+      if (slotMap[index]) return; // already mounted — keep its buffer
+      const v = modalVideos[index];
+      const slide = swiperWrapper.children[index];
+      if (!v || !slide) return;
+      const video = freePoolVideo();
+      if (!video) return;
+      video.classList.remove('nq-playing');
+      slide.insertBefore(video, slide.firstChild); // sits behind thumb/overlay
+      const src   = v.streamUrl || v.videoUrl;
+      const isHls  = !!(v.streamUrl);
+      // Source attached here; playback is driven by playSlide() (which retries
+      // on canplay), so we don't call play() in the ready callback.
+      const hls = attachStream(video, src, isHls, () => {});
+      slotMap[index] = { video, hls: hls || null };
+    }
+
+    // Pull the <video> back out of a slide and free it for reuse elsewhere.
+    function releaseSlot(index) {
+      const slot = slotMap[index];
+      if (!slot) return;
+      const { video, hls } = slot;
+      if (hls) { try { hls.destroy(); } catch (e) {} }
+      try { video.pause(); } catch (e) {}
+      video.removeAttribute('src');
+      try { video.load(); } catch (e) {}
+      if (video.parentNode) video.parentNode.removeChild(video);
+      delete slotMap[index];
+      resetSlide(index); // back to thumbnail
+    }
+
+    function releaseAllSlots() {
+      Object.keys(slotMap).map(Number).forEach(releaseSlot);
     }
 
     function manageSlides(activeIndex) {
       const total = modalVideos.length;
-      const keepAlive = new Set();
+      const win = new Set();
       for (let i = Math.max(0, activeIndex - PRELOAD_RANGE); i <= Math.min(total - 1, activeIndex + PRELOAD_RANGE); i++) {
-        keepAlive.add(i);
+        win.add(i);
       }
-      // Free slides outside the window (and reset them to thumbnail state)
-      Object.keys(slideHlsMap).forEach((idx) => {
-        if (!keepAlive.has(Number(idx))) destroySlideHls(Number(idx));
-      });
-      // Buffer everything inside the window — neighbours download while you watch
-      keepAlive.forEach((idx) => initSlideHls(idx));
-
-      // Play active, pause + show-thumbnail for the rest
-      for (let i = 0; i < total; i++) {
-        const videoEl = getSlideVideo(i);
-        if (!videoEl) continue;
-        if (i === activeIndex) {
-          playSlide(i);
+      // Release slots outside the window FIRST so their videos are free to reuse
+      Object.keys(slotMap).map(Number).forEach((idx) => { if (!win.has(idx)) releaseSlot(idx); });
+      // Mount a pooled video into each slide in the window
+      win.forEach((idx) => assignSlot(idx));
+      // Play the active one; pause + thumbnail the neighbours
+      win.forEach((idx) => {
+        if (idx === activeIndex) {
+          playSlide(idx);
         } else {
-          videoEl.pause();
-          resetSlide(i);
+          const vEl = getSlideVideo(idx);
+          if (vEl) vEl.pause();
+          resetSlide(idx);
         }
-      }
+      });
     }
 
     function updateUI(index) {
@@ -356,43 +405,52 @@
       // Free up connections for the modal videos.
       pauseCarouselVideos();
 
-      // Build one slide per video.
-      // IMPORTANT: poster attribute is destroyed by HLS.js on attachMedia — do NOT rely on it.
-      // Instead, use a separate <img> overlay (same pattern as carousel cards) that fades out on play.
-      // Slides start in their thumbnail state (no nq-loading). The spinner is
-      // only added by playSlide() while the ACTIVE video is still buffering,
-      // so idle/neighbour slides simply show their thumbnail.
+      // Build a lightweight, thumbnail-only slide per video — NO <video> here.
+      // The actual <video> elements come from a small reusable pool and are
+      // mounted into the active slide + neighbours by manageSlides(). This keeps
+      // the media-player count tiny regardless of how many videos exist.
       swiperWrapper.innerHTML = videos.map((v) => `
         <div class="swiper-slide nq-video-slide">
-          <video class="nq-slide-video" playsinline webkit-playsinline muted loop preload="none"></video>
           ${v.thumbnailUrl ? `<img class="nq-slide-thumb" src="${v.thumbnailUrl}" alt="">` : ''}
           <div class="nq-video-loading"><div class="nq-spinner"></div></div>
+          <button class="nq-play-overlay" aria-label="Play video" tabindex="-1">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>
+          </button>
         </div>
       `).join('');
+
+      buildPool(); // create the reusable <video> elements once
 
       // Init Swiper (loads from CDN on first open)
       loadSwiper().then((Swiper) => {
         if (!Swiper) return;
+        // Construct WITHOUT event handlers first, then assign swiperInstance.
+        // With a non-zero initialSlide, Swiper fires slideChange DURING
+        // construction; if the handler ran then it would reference an
+        // unassigned swiperInstance, throw, and abort setup (no videos mount,
+        // navigation dead). Attaching handlers after assignment avoids that and
+        // they won't fire for the initial slide.
         swiperInstance = new Swiper('#nq-video-swiper', {
           direction: getModalDirection(),
           speed: 280,
           initialSlide: index,
           grabCursor: true,
           resistanceRatio: 0.6,
-          on: {
-            // Fire during the swipe animation — start buffering the incoming video immediately
-            slideChangeTransitionStart: () => {
-              modalIndex = swiperInstance.activeIndex;
-              manageSlides(modalIndex);
-            },
-            // Fire after animation completes — update UI once the slide is settled
-            slideChange: () => {
-              updateUI(modalIndex);
-              iconMuted.style.display = isMuted ? 'block' : 'none';
-              iconSound.style.display  = isMuted ? 'none'  : 'block';
-            },
-          },
         });
+
+        // Fire during the swipe animation — start buffering the incoming video
+        swiperInstance.on('slideChangeTransitionStart', () => {
+          modalIndex = swiperInstance.activeIndex;
+          manageSlides(modalIndex);
+        });
+        // Fire after animation completes — keep counter/product panel in sync
+        swiperInstance.on('slideChange', () => {
+          modalIndex = swiperInstance.activeIndex;
+          updateUI(modalIndex);
+          iconMuted.style.display = isMuted ? 'block' : 'none';
+          iconSound.style.display  = isMuted ? 'none'  : 'block';
+        });
+
         updateUI(index);
         manageSlides(index);
       });
@@ -402,18 +460,36 @@
       modal.style.display = 'none';
       document.body.style.overflow = '';
       document.body.classList.remove('nq-modal-open');
-      Object.keys(slideHlsMap).forEach((idx) => destroySlideHls(Number(idx)));
-      slideHlsMap = {};
+      // Detach pooled videos and clear their sources (keeps the pool for reuse).
+      releaseAllSlots();
       if (swiperInstance) { swiperInstance.destroy(true, true); swiperInstance = null; }
       swiperWrapper.innerHTML = '';
 
-      // Resume the carousel now that the modal's videos are gone.
+      // Resume the carousel now that the modal's videos are idle.
       resumeCarouselVideos();
     }
 
     // ── Event listeners ──────────────────────────────────────────────────
     bg.addEventListener('click', closeModal);
     closeBtn.addEventListener('click', closeModal);
+
+    // Tap the video (or the play button) to toggle play/pause — the reliable
+    // way to start a video whenever autoplay didn't. Swiper only emits a click
+    // on a tap (not a drag/swipe), so this doesn't interfere with navigation.
+    swiperWrapper.addEventListener('click', (e) => {
+      const slide = e.target.closest('.nq-video-slide');
+      if (!slide) return;
+      const idx = Array.prototype.indexOf.call(swiperWrapper.children, slide);
+      const videoEl = getSlideVideo(idx);
+      if (!videoEl) return;
+      if (e.target.closest('.nq-play-overlay') || videoEl.paused) {
+        videoEl.muted = isMuted;
+        const p = videoEl.play();
+        if (p && p.catch) p.catch(() => {});
+      } else {
+        videoEl.pause();
+      }
+    });
 
     if (peekPrev)  peekPrev.addEventListener('click',  () => swiperInstance?.slidePrev());
     if (peekNext)  peekNext.addEventListener('click',  () => swiperInstance?.slideNext());

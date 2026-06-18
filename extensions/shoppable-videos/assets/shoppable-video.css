@@ -320,6 +320,38 @@
   opacity: 0;
 }
 
+/* Tap-to-play button — hidden by default, shown when the active video is
+   paused or autoplay was blocked. Tapping it (or the video) starts playback. */
+.nq-play-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 64px;
+  height: 64px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  cursor: pointer;
+  z-index: 5;
+}
+
+.nq-play-overlay svg { margin-left: 3px; } /* optical centering of the triangle */
+
+.nq-video-slide.nq-paused .nq-play-overlay {
+  display: flex;
+}
+
+/* When paused, never show the buffering spinner. */
+.nq-video-slide.nq-paused .nq-video-loading {
+  opacity: 0;
+}
+
 /* Close button — top right, square */
 .nq-close-btn {
   position: absolute;
