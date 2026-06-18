@@ -183,21 +183,35 @@
       const slide = swiperWrapper.children[index];
       videoEl.muted = isMuted;
 
-      const onFrame = () => {
-        if (swiperInstance && swiperInstance.activeIndex === index) revealSlide(index);
+      const stillActive = () => swiperInstance && swiperInstance.activeIndex === index;
+
+      const tryPlay = () => {
+        if (!stillActive()) return;
+        const p = videoEl.play();
+        if (p && p.catch) p.catch(() => {}); // ignore AbortError; we retry on ready
+      };
+
+      // Reveal once a real frame exists, AND retry play() if it's still paused.
+      // The first play() during the rapid open sequence can be aborted
+      // (AbortError) before playback starts; without this retry the video loads
+      // but stays frozen on the first frame. Retrying on loadeddata/canplay —
+      // when loading has settled — reliably starts it.
+      const onReady = () => {
+        if (!stillActive()) return;
+        revealSlide(index);
+        if (videoEl.paused) tryPlay();
       };
 
       if (videoEl.readyState >= 2) {
-        // Already has a decoded frame — reveal immediately, no spinner.
-        videoEl.play().catch(() => {});
-        onFrame();
+        tryPlay();
+        onReady();
       } else {
-        // Still buffering — keep the thumbnail up (with spinner) until the
-        // first frame is painted, then crossfade to video.
+        // Still buffering — keep the thumbnail up (with spinner) until ready.
         if (slide) slide.classList.add('nq-loading');
-        videoEl.addEventListener('playing', onFrame, { once: true });
-        videoEl.addEventListener('loadeddata', onFrame, { once: true });
-        videoEl.play().catch(() => {});
+        videoEl.addEventListener('loadeddata', onReady, { once: true });
+        videoEl.addEventListener('canplay', onReady, { once: true });
+        videoEl.addEventListener('playing', () => { if (stillActive()) revealSlide(index); }, { once: true });
+        tryPlay();
       }
     }
 
@@ -215,8 +229,10 @@
       videoEl.preload = 'auto';
 
       const hls = attachStream(videoEl, src, isHls, () => {
-        // Source attached/ready — only auto-play if this is the active slide.
-        if (swiperInstance && swiperInstance.activeIndex === index) playSlide(index);
+        // Source attached. Playback for the active slide is driven by
+        // manageSlides()/playSlide() (which retries on canplay), so we do NOT
+        // call play() here — a second play() call abuts the first and both
+        // reject with AbortError, leaving the video paused.
       });
       slideHlsMap[index] = hls || null;
     }
