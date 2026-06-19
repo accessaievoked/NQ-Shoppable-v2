@@ -586,12 +586,27 @@
       el.classList.toggle('nq-hide-title-mobile', !cfg.title.mobile.show);
       el.classList.toggle('nq-hide-price-desktop', !cfg.price.desktop.show);
       el.classList.toggle('nq-hide-price-mobile', !cfg.price.mobile.show);
+      el.classList.toggle('nq-hide-views', !cfg.badge.showViews);
 
-      // Button colors (global — the modal lives outside this container)
+      // Global (device-independent) element styling — Phase 2
+      setVar('--nq-card-border-w', cfg.card.borderWidth + 'px');
+      setVar('--nq-card-border-color', cfg.card.borderColor);
+      setVar('--nq-card-shadow', cfg.card.shadow ? '0 2px 12px rgba(0,0,0,0.12)' : 'none');
+      setVar('--nq-title-weight', String(cfg.title.fontWeight));
+      setVar('--nq-price-weight', String(cfg.price.fontWeight));
+      setVar('--nq-badge-color', cfg.badge.color);
+
+      // Button styling (global — the modal lives outside this container)
       const root = document.documentElement;
       root.style.setProperty('--nq-btn-bg', cfg.button.bg);
       root.style.setProperty('--nq-btn-text-color', cfg.button.textColor);
       root.style.setProperty('--nq-btn-radius', cfg.button.radius + 'px');
+      root.style.setProperty('--nq-btn-size', cfg.button.fontSize + 'px');
+      root.style.setProperty('--nq-btn-weight', String(cfg.button.fontWeight));
+      root.style.setProperty('--nq-btn-py', cfg.button.paddingY + 'px');
+      root.style.setProperty('--nq-btn-px', cfg.button.paddingX + 'px');
+      root.style.setProperty('--nq-btn-border-w', cfg.button.borderWidth + 'px');
+      root.style.setProperty('--nq-btn-border-color', cfg.button.borderColor);
 
       // Section title (rendered by Liquid as a sibling of the carousel)
       let title = el.previousElementSibling;
@@ -602,6 +617,9 @@
         const anyShown = cfg.section.desktop.show || cfg.section.mobile.show;
         title.style.display = anyShown ? '' : 'none';
         if (cfg.section.text) title.textContent = cfg.section.text;
+        title.style.setProperty('--nq-sec-weight', String(cfg.section.fontWeight));
+        title.style.setProperty('--nq-sec-spacing', cfg.section.letterSpacing + 'px');
+        title.style.setProperty('--nq-sec-mb', cfg.section.marginBottom + 'px');
         ['desktop', 'mobile'].forEach((d) => {
           title.style.setProperty(`--nq-sec-size-${d}`, cfg.section[d].fontSize + 'px');
           title.style.setProperty(`--nq-sec-color-${d}`, cfg.section[d].color);
@@ -680,7 +698,7 @@
               ></video>
               ${v.viewCount ? `
                 <div class="nq-view-count">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="white">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
                   </svg>
                   ${v.viewCount}

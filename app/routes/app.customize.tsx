@@ -32,7 +32,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 type Device = "desktop" | "mobile";
-type ElementKey = "section" | "card" | "title" | "price" | "button";
+type ElementKey = "section" | "card" | "title" | "price" | "button" | "badge";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function Customize() {
@@ -114,11 +114,12 @@ export default function Customize() {
                   onClick={() => setSelected("section")}
                   style={{
                     cursor: "pointer",
-                    fontWeight: 700,
+                    fontWeight: c.section.fontWeight,
+                    letterSpacing: c.section.letterSpacing,
                     fontSize: c.section[dev].fontSize * scale + 4,
                     color: c.section[dev].color,
                     textAlign: c.section[dev].align as any,
-                    margin: "0 0 12px",
+                    margin: `0 0 ${Math.round(c.section.marginBottom * scale)}px`,
                     ...selOutline("section"),
                   }}
                 >
@@ -140,9 +141,24 @@ export default function Customize() {
                         position: "relative",
                         overflow: "hidden",
                         cursor: "pointer",
+                        border: c.card.borderWidth ? `${c.card.borderWidth}px solid ${c.card.borderColor}` : "none",
+                        boxShadow: c.card.shadow ? "0 2px 12px rgba(0,0,0,0.18)" : "none",
                         ...selOutline("card"),
                       }}
                     >
+                      {c.badge.showViews && (
+                        <span
+                          onClick={(e) => { e.stopPropagation(); setSelected("badge"); }}
+                          style={{
+                            position: "absolute", top: 6, left: 6,
+                            background: "rgba(0,0,0,0.55)", color: c.badge.color,
+                            fontSize: 9, fontWeight: 600, padding: "2px 6px", borderRadius: 10,
+                            ...selOutline("badge"),
+                          }}
+                        >
+                          👁 118
+                        </span>
+                      )}
                       <span style={{ position: "absolute", bottom: 6, left: 8, color: "#fff", fontSize: 10, opacity: 0.7 }}>
                         video
                       </span>
@@ -155,7 +171,7 @@ export default function Customize() {
                             cursor: "pointer",
                             fontSize: c.title[dev].fontSize * scale + 2,
                             color: c.title[dev].color,
-                            fontWeight: 600,
+                            fontWeight: c.title.fontWeight,
                             ...selOutline("title"),
                           }}
                         >
@@ -169,7 +185,7 @@ export default function Customize() {
                             cursor: "pointer",
                             fontSize: c.price[dev].fontSize * scale + 2,
                             color: c.price[dev].color,
-                            fontWeight: 700,
+                            fontWeight: c.price.fontWeight,
                             ...selOutline("price"),
                           }}
                         >
@@ -189,10 +205,10 @@ export default function Customize() {
                     background: c.button.bg,
                     color: c.button.textColor,
                     borderRadius: c.button.radius,
-                    border: "none",
-                    padding: "10px 16px",
-                    fontWeight: 600,
-                    fontSize: 13,
+                    border: c.button.borderWidth ? `${c.button.borderWidth}px solid ${c.button.borderColor}` : "none",
+                    padding: `${c.button.paddingY}px ${c.button.paddingX}px`,
+                    fontWeight: c.button.fontWeight,
+                    fontSize: c.button.fontSize,
                     cursor: "pointer",
                     ...selOutline("button"),
                   }}
@@ -220,7 +236,10 @@ const labels: Record<ElementKey, string> = {
   title: "Product title",
   price: "Price",
   button: "Button",
+  badge: "Views badge",
 };
+
+const WEIGHTS = ["400", "500", "600", "700", "800"];
 
 // ─── Settings controls per element ───────────────────────────────────────────
 function renderSettings(
@@ -235,10 +254,13 @@ function renderSettings(
       return (
         <>
           <Text label="Title text" value={c.section.text} onChange={(v) => set(["carousel", "section", "text"], v)} />
-          <Toggle label="Show" value={c.section[dev].show} onChange={(v) => set(["carousel", "section", dev, "show"], v)} />
+          <Toggle label={`Show on ${dev}`} value={c.section[dev].show} onChange={(v) => set(["carousel", "section", dev, "show"], v)} />
           <Num label="Font size (px)" value={c.section[dev].fontSize} onChange={(v) => set(["carousel", "section", dev, "fontSize"], v)} />
+          <Weight value={c.section.fontWeight} onChange={(v) => set(["carousel", "section", "fontWeight"], v)} />
+          <Num label="Letter spacing (px)" value={c.section.letterSpacing} onChange={(v) => set(["carousel", "section", "letterSpacing"], v)} />
           <Color label="Color" value={c.section[dev].color} onChange={(v) => set(["carousel", "section", dev, "color"], v)} />
           <Select label="Align" value={c.section[dev].align} options={["left", "center", "right"]} onChange={(v) => set(["carousel", "section", dev, "align"], v)} />
+          <Num label="Space below (px)" value={c.section.marginBottom} onChange={(v) => set(["carousel", "section", "marginBottom"], v)} />
         </>
       );
     case "card":
@@ -248,21 +270,26 @@ function renderSettings(
           <Num label="Height (px)" value={c.card[dev].height} onChange={(v) => set(["carousel", "card", dev, "height"], v)} />
           <Num label="Corner radius (px)" value={c.card[dev].radius} onChange={(v) => set(["carousel", "card", dev, "radius"], v)} />
           <Num label="Gap between cards (px)" value={c.card[dev].gap} onChange={(v) => set(["carousel", "card", dev, "gap"], v)} />
+          <Num label="Border width (px)" value={c.card.borderWidth} onChange={(v) => set(["carousel", "card", "borderWidth"], v)} />
+          <Color label="Border color" value={c.card.borderColor} onChange={(v) => set(["carousel", "card", "borderColor"], v)} />
+          <Toggle label="Drop shadow" value={c.card.shadow} onChange={(v) => set(["carousel", "card", "shadow"], v)} />
         </>
       );
     case "title":
       return (
         <>
-          <Toggle label="Show product title" value={c.title[dev].show} onChange={(v) => set(["carousel", "title", dev, "show"], v)} />
+          <Toggle label={`Show on ${dev}`} value={c.title[dev].show} onChange={(v) => set(["carousel", "title", dev, "show"], v)} />
           <Num label="Font size (px)" value={c.title[dev].fontSize} onChange={(v) => set(["carousel", "title", dev, "fontSize"], v)} />
+          <Weight value={c.title.fontWeight} onChange={(v) => set(["carousel", "title", "fontWeight"], v)} />
           <Color label="Color" value={c.title[dev].color} onChange={(v) => set(["carousel", "title", dev, "color"], v)} />
         </>
       );
     case "price":
       return (
         <>
-          <Toggle label="Show price" value={c.price[dev].show} onChange={(v) => set(["carousel", "price", dev, "show"], v)} />
+          <Toggle label={`Show on ${dev}`} value={c.price[dev].show} onChange={(v) => set(["carousel", "price", dev, "show"], v)} />
           <Num label="Font size (px)" value={c.price[dev].fontSize} onChange={(v) => set(["carousel", "price", dev, "fontSize"], v)} />
+          <Weight value={c.price.fontWeight} onChange={(v) => set(["carousel", "price", "fontWeight"], v)} />
           <Color label="Color" value={c.price[dev].color} onChange={(v) => set(["carousel", "price", dev, "color"], v)} />
         </>
       );
@@ -272,7 +299,20 @@ function renderSettings(
           <Text label="Button text" value={c.button.text} onChange={(v) => set(["carousel", "button", "text"], v)} />
           <Color label="Background" value={c.button.bg} onChange={(v) => set(["carousel", "button", "bg"], v)} />
           <Color label="Text color" value={c.button.textColor} onChange={(v) => set(["carousel", "button", "textColor"], v)} />
+          <Num label="Font size (px)" value={c.button.fontSize} onChange={(v) => set(["carousel", "button", "fontSize"], v)} />
+          <Weight value={c.button.fontWeight} onChange={(v) => set(["carousel", "button", "fontWeight"], v)} />
           <Num label="Corner radius (px)" value={c.button.radius} onChange={(v) => set(["carousel", "button", "radius"], v)} />
+          <Num label="Padding vertical (px)" value={c.button.paddingY} onChange={(v) => set(["carousel", "button", "paddingY"], v)} />
+          <Num label="Padding horizontal (px)" value={c.button.paddingX} onChange={(v) => set(["carousel", "button", "paddingX"], v)} />
+          <Num label="Border width (px)" value={c.button.borderWidth} onChange={(v) => set(["carousel", "button", "borderWidth"], v)} />
+          <Color label="Border color" value={c.button.borderColor} onChange={(v) => set(["carousel", "button", "borderColor"], v)} />
+        </>
+      );
+    case "badge":
+      return (
+        <>
+          <Toggle label="Show views badge" value={c.badge.showViews} onChange={(v) => set(["carousel", "badge", "showViews"], v)} />
+          <Color label="Text color" value={c.badge.color} onChange={(v) => set(["carousel", "badge", "color"], v)} />
         </>
       );
   }
@@ -316,6 +356,15 @@ function Select({ label, value, options, onChange }: { label: string; value: str
     <Field label={label}>
       <select value={value} onChange={(e) => onChange(e.target.value)} style={styles.input}>
         {options.map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </Field>
+  );
+}
+function Weight({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <Field label="Font weight">
+      <select value={String(value)} onChange={(e) => onChange(Number(e.target.value))} style={styles.input}>
+        {WEIGHTS.map((w) => <option key={w} value={w}>{w}</option>)}
       </select>
     </Field>
   );
