@@ -375,7 +375,7 @@
           <div class="nq-actions">
             ${v.productUrl ? `<a class="nq-btn nq-btn-info" href="${v.productUrl}">More info</a>` : ''}
             ${v.variantId ? `
-              <button class="nq-btn nq-btn-atc" data-variant="${v.variantId}" data-video-id="${v.id}" onclick="NQShoppable.addToCart(this)">Add to cart</button>
+              <button class="nq-btn nq-btn-atc" data-variant="${v.variantId}" data-video-id="${v.id}" onclick="NQShoppable.addToCart(this)">${(window.NQ_STYLE && window.NQ_STYLE.carousel && window.NQ_STYLE.carousel.button && window.NQ_STYLE.carousel.button.text) || 'Add to cart'}</button>
               <a class="nq-btn nq-btn-cart" href="/cart/${v.variantId}:1?checkout" title="Checkout">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
@@ -542,10 +542,72 @@
       // Load HLS.js in background immediately — ready by the time user scrolls
       loadHls();
       initModal();
-      await this.fetchVideos();
+      // Fetch videos and the merchant's style config in parallel
+      await Promise.all([this.fetchVideos(), this.fetchStyle()]);
+      this.applyStyle();   // CSS variables + section title + show/hide classes
       this.render();
       this.preloadFirstCard();
       this.setupIntersectionObserver();
+    }
+
+    async fetchStyle() {
+      try {
+        const res = await fetch(`/apps/nq-videos/api/style`, { headers: { 'Accept': 'application/json' } });
+        const data = await res.json();
+        this.style = data.config || null;
+      } catch {
+        this.style = null;
+      }
+      // Expose globally so the shared modal can read button text/colors
+      if (this.style) window.NQ_STYLE = this.style;
+    }
+
+    applyStyle() {
+      const cfg = this.style && this.style.carousel;
+      if (!cfg) return;
+      const el = this.container;
+      const setVar = (k, v) => el.style.setProperty(k, v);
+
+      // Card dimensions / radius / gap (per device)
+      ['desktop', 'mobile'].forEach((d) => {
+        const card = cfg.card[d];
+        setVar(`--nq-card-w-${d}`, card.width + 'px');
+        setVar(`--nq-card-h-${d}`, card.height + 'px');
+        setVar(`--nq-card-radius-${d}`, card.radius + 'px');
+        setVar(`--nq-card-gap-${d}`, card.gap + 'px');
+        setVar(`--nq-title-size-${d}`, cfg.title[d].fontSize + 'px');
+        setVar(`--nq-title-color-${d}`, cfg.title[d].color);
+        setVar(`--nq-price-size-${d}`, cfg.price[d].fontSize + 'px');
+        setVar(`--nq-price-color-${d}`, cfg.price[d].color);
+      });
+
+      // Show/hide title & price per device (CSS handles the media queries)
+      el.classList.toggle('nq-hide-title-desktop', !cfg.title.desktop.show);
+      el.classList.toggle('nq-hide-title-mobile', !cfg.title.mobile.show);
+      el.classList.toggle('nq-hide-price-desktop', !cfg.price.desktop.show);
+      el.classList.toggle('nq-hide-price-mobile', !cfg.price.mobile.show);
+
+      // Button colors (global — the modal lives outside this container)
+      const root = document.documentElement;
+      root.style.setProperty('--nq-btn-bg', cfg.button.bg);
+      root.style.setProperty('--nq-btn-text-color', cfg.button.textColor);
+      root.style.setProperty('--nq-btn-radius', cfg.button.radius + 'px');
+
+      // Section title (rendered by Liquid as a sibling of the carousel)
+      let title = el.previousElementSibling;
+      if (!title || !title.classList || !title.classList.contains('nq-section-title')) {
+        title = el.parentElement ? el.parentElement.querySelector('.nq-section-title') : null;
+      }
+      if (title) {
+        const anyShown = cfg.section.desktop.show || cfg.section.mobile.show;
+        title.style.display = anyShown ? '' : 'none';
+        if (cfg.section.text) title.textContent = cfg.section.text;
+        ['desktop', 'mobile'].forEach((d) => {
+          title.style.setProperty(`--nq-sec-size-${d}`, cfg.section[d].fontSize + 'px');
+          title.style.setProperty(`--nq-sec-color-${d}`, cfg.section[d].color);
+          title.style.setProperty(`--nq-sec-align-${d}`, cfg.section[d].align);
+        });
+      }
     }
 
     preloadFirstCard() {
@@ -627,11 +689,7 @@
             </div>
             <div class="nq-card-info">
               <p class="nq-card-title">${v.productTitle || v.title || ''}</p>
-              <div class="nq-card-prices">
-                ${v.price ? `<p class="nq-card-price">${formatPrice(v.price, v.currency)}</p>` : ''}
-                ${v.compareAtPrice ? `<p class="nq-card-compare-price">${formatPrice(v.compareAtPrice, v.currency)}</p>` : ''}
-                ${discount ? `<p class="nq-card-discount">${discount}% off</p>` : ''}
-              </div>
+              ${v.price ? `<p class="nq-card-price">${formatPrice(v.price, v.currency)}</p>` : ''}
             </div>
           </div>
         `;

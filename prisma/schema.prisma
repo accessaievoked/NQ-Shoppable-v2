@@ -41,6 +41,14 @@ model Video {
   updatedAt       DateTime @updatedAt
 }
 
+model StyleSetting {
+  id        String   @id @default(cuid())
+  shop      String   @unique
+  config    String   @default("{}") // JSON blob of the widget style configuration
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
 model AnalyticsEvent {
   id        String   @id @default(cuid())
   shop      String
