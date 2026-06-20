@@ -544,8 +544,42 @@
       initModal();
       await this.fetchVideos();
       this.render();
+      this.addCarouselArrows();
       this.preloadFirstCard();
       this.setupIntersectionObserver();
+    }
+
+    // Left/right buttons to scroll the carousel without opening the modal.
+    addCarouselArrows() {
+      const track = this.container.querySelector('.nq-carousel-track');
+      if (!track) return;
+
+      const mkBtn = (cls, label, inner) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'nq-carousel-arrow ' + cls;
+        b.setAttribute('aria-label', label);
+        b.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">' + inner + '</svg>';
+        return b;
+      };
+      const prev = mkBtn('nq-carousel-arrow-prev', 'Previous videos', '<polyline points="15 18 9 12 15 6"></polyline>');
+      const next = mkBtn('nq-carousel-arrow-next', 'More videos', '<polyline points="9 18 15 12 9 6"></polyline>');
+      this.container.appendChild(prev);
+      this.container.appendChild(next);
+
+      const amount = () => Math.max(220, Math.round(track.clientWidth * 0.85));
+      prev.addEventListener('click', () => track.scrollBy({ left: -amount(), behavior: 'smooth' }));
+      next.addEventListener('click', () => track.scrollBy({ left: amount(), behavior: 'smooth' }));
+
+      const update = () => {
+        const max = track.scrollWidth - track.clientWidth - 4;
+        prev.dataset.hidden = track.scrollLeft <= 4 ? 'true' : 'false';
+        next.dataset.hidden = (max <= 0 || track.scrollLeft >= max) ? 'true' : 'false';
+      };
+      track.addEventListener('scroll', update, { passive: true });
+      window.addEventListener('resize', update);
+      setTimeout(update, 150); // re-check once thumbnails have laid out
+      update();
     }
 
     preloadFirstCard() {
@@ -630,7 +664,7 @@
               <div class="nq-card-prices">
                 ${v.price ? `<p class="nq-card-price">${formatPrice(v.price, v.currency)}</p>` : ''}
                 ${v.compareAtPrice ? `<p class="nq-card-compare-price">${formatPrice(v.compareAtPrice, v.currency)}</p>` : ''}
-                ${discount ? `<p class="nq-card-discount">${discount}% off</p>` : ''}
+                ${discount ? `<span class="nq-card-discount">${discount}% off</span>` : ''}
               </div>
             </div>
           </div>
