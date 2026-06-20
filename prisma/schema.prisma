@@ -32,6 +32,9 @@ model Video {
   price           Float?
   compareAtPrice  Float?
   currency        String   @default("INR")
+  // Multiple tagged products (JSON array). The single fields above mirror the
+  // first product for backwards compatibility.
+  products        String   @default("[]")
   // Settings
   active          Boolean  @default(true)
   sortOrder       Int      @default(0)

@@ -61,6 +61,23 @@
     }
   }
 
+  // Products tagged to a video (array). Falls back to the legacy single-product
+  // fields so videos saved before multi-product still render.
+  function getModalProducts(v) {
+    if (v && Array.isArray(v.products) && v.products.length) return v.products;
+    if (v && (v.productTitle || v.variantId || v.productUrl)) {
+      return [{
+        productTitle: v.productTitle,
+        productImageUrl: v.productImageUrl,
+        price: v.price,
+        compareAtPrice: v.compareAtPrice,
+        currency: v.currency,
+        productUrl: v.productUrl,
+      }];
+    }
+    return [{}];
+  }
+
   // ─── Attach HLS or MP4 to a video element ───────────────────────────
   function attachStream(videoEl, src, isHls, onReady) {
     if (isHls && videoEl.canPlayType('application/vnd.apple.mpegurl')) {
@@ -346,23 +363,47 @@
       const card = document.getElementById('nq-product-card');
       if (!card) return;
 
-      // claura-style product card: image + name + price, with a SHOP NOW
-      // button that links straight to the product page.
-      card.innerHTML = `
-        <div class="nq-prod-card">
-          ${v.productImageUrl
-            ? `<img class="nq-prod-img" src="${v.productImageUrl}" alt="${v.productTitle || ''}" loading="lazy">`
-            : '<div class="nq-prod-img nq-prod-img-ph"></div>'}
-          <div class="nq-prod-info">
-            <p class="nq-prod-name">${v.productTitle || 'View Product'}</p>
-            <div class="nq-prod-prices">
-              ${v.price ? `<span class="nq-prod-price">${formatPrice(v.price, v.currency)}</span>` : ''}
-              ${v.compareAtPrice ? `<span class="nq-prod-compare">${formatPrice(v.compareAtPrice, v.currency)}</span>` : ''}
+      const products = getModalProducts(v);
+
+      if (products.length > 1) {
+        // Multiple tagged products — stacked clickable cards, each linking to
+        // its own product page.
+        card.classList.add('nq-multi');
+        card.innerHTML = products.map((p) => `
+          <a class="nq-prod-card nq-prod-link" href="${p.productUrl || '#'}">
+            ${p.productImageUrl
+              ? `<img class="nq-prod-img" src="${p.productImageUrl}" alt="${p.productTitle || ''}" loading="lazy">`
+              : '<div class="nq-prod-img nq-prod-img-ph"></div>'}
+            <div class="nq-prod-info">
+              <p class="nq-prod-name">${p.productTitle || 'View Product'}</p>
+              <div class="nq-prod-prices">
+                ${p.price ? `<span class="nq-prod-price">${formatPrice(p.price, p.currency)}</span>` : ''}
+                ${p.compareAtPrice ? `<span class="nq-prod-compare">${formatPrice(p.compareAtPrice, p.currency)}</span>` : ''}
+              </div>
+            </div>
+            <span class="nq-prod-cta">Shop Now</span>
+          </a>
+        `).join('');
+      } else {
+        // Single product — image + name + price + full-width SHOP NOW button.
+        card.classList.remove('nq-multi');
+        const p = products[0] || {};
+        card.innerHTML = `
+          <div class="nq-prod-card">
+            ${p.productImageUrl
+              ? `<img class="nq-prod-img" src="${p.productImageUrl}" alt="${p.productTitle || ''}" loading="lazy">`
+              : '<div class="nq-prod-img nq-prod-img-ph"></div>'}
+            <div class="nq-prod-info">
+              <p class="nq-prod-name">${p.productTitle || 'View Product'}</p>
+              <div class="nq-prod-prices">
+                ${p.price ? `<span class="nq-prod-price">${formatPrice(p.price, p.currency)}</span>` : ''}
+                ${p.compareAtPrice ? `<span class="nq-prod-compare">${formatPrice(p.compareAtPrice, p.currency)}</span>` : ''}
+              </div>
             </div>
           </div>
-        </div>
-        <a class="nq-shop-now" href="${v.productUrl || '#'}">Shop Now</a>
-      `;
+          <a class="nq-shop-now" href="${p.productUrl || '#'}">Shop Now</a>
+        `;
+      }
 
       // Reflect the like state for the current video
       if (likeBtn) likeBtn.classList.toggle('nq-liked', likedSet.has(v.id));

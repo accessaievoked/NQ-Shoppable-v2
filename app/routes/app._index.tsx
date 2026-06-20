@@ -47,6 +47,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         price: true,
         compareAtPrice: true,
         currency: true,
+        products: true,
         active: true,
         sortOrder: true,
         viewCount: true,
@@ -86,24 +87,30 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (intent === "attach") {
-    await db.video.update({
-      where: { id: videoId },
+    let products: any[] = [];
+    try { products = JSON.parse(formData.get("products") as string) || []; } catch { products = []; }
+    const first = products[0] || {};
+    await db.video.updateMany({
+      where: { id: videoId, shop: session.shop },
       data: {
-        variantId:       (formData.get("variantId") as string) || "",
-        productTitle:    (formData.get("productTitle") as string) || "",
-        productImageUrl: (formData.get("productImageUrl") as string) || "",
-        price:           parseFloat(formData.get("price") as string) || null,
-        compareAtPrice:  parseFloat(formData.get("compareAtPrice") as string) || null,
-        currency:        (formData.get("currency") as string) || "INR",
-        productUrl:      (formData.get("productUrl") as string) || "",
+        products:        JSON.stringify(products),
+        // Mirror the first product into the legacy fields (card display + compat)
+        variantId:       first.variantId || "",
+        productTitle:    first.productTitle || "",
+        productImageUrl: first.productImageUrl || "",
+        productUrl:      first.productUrl || "",
+        price:           first.price != null ? Number(first.price) : null,
+        compareAtPrice:  first.compareAtPrice != null ? Number(first.compareAtPrice) : null,
+        currency:        first.currency || "INR",
       },
     });
   }
 
   if (intent === "detach") {
-    await db.video.update({
-      where: { id: videoId },
+    await db.video.updateMany({
+      where: { id: videoId, shop: session.shop },
       data: {
+        products: "[]",
         variantId: "", productTitle: "", productImageUrl: "",
         price: null, compareAtPrice: null, productUrl: "",
       },
@@ -124,6 +131,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   return null;
 };
+
+// Parse a video's attached products (falls back to the legacy single product).
+function productList(video: any): any[] {
+  try {
+    const p = JSON.parse(video.products || "[]");
+    if (Array.isArray(p) && p.length) return p;
+  } catch { /* ignore */ }
+  return video.variantId ? [{ productTitle: video.productTitle, productImageUrl: video.productImageUrl }] : [];
+}
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function Index() {
@@ -192,23 +208,29 @@ export default function Index() {
       const selected = await (shopify as any).resourcePicker({
         type: "product",
         action: "select",
-        multiple: false,
+        multiple: true,
       });
       if (!selected || selected.length === 0) return;
 
-      const product = selected[0];
-      const variant = product.variants[0];
+      const products = selected.map((product: any) => {
+        const variant = product.variants?.[0] ?? {};
+        const variantIdNumeric = variant.id ? String(variant.id).split("/").pop() : "";
+        return {
+          productId:       product.id,
+          variantId:       variantIdNumeric,
+          productTitle:    product.title,
+          productImageUrl: product.images?.[0]?.originalSrc ?? "",
+          price:           variant.price != null ? Number(variant.price) : null,
+          compareAtPrice:  variant.compareAtPrice != null ? Number(variant.compareAtPrice) : null,
+          currency:        "INR",
+          productUrl:      `/products/${product.handle}`,
+        };
+      });
 
       const fd = new FormData();
-      fd.set("intent",          "attach");
-      fd.set("videoId",         videoId);
-      fd.set("variantId",       String(variant.id));
-      fd.set("productTitle",    product.title);
-      fd.set("productImageUrl", product.images?.[0]?.originalSrc ?? "");
-      fd.set("price",           String(variant.price ?? ""));
-      fd.set("compareAtPrice",  String(variant.compareAtPrice ?? ""));
-      fd.set("currency",        "INR");
-      fd.set("productUrl",      `/products/${product.handle}`);
+      fd.set("intent",   "attach");
+      fd.set("videoId",  videoId);
+      fd.set("products", JSON.stringify(products));
       submit(fd, { method: "post" });
     } catch {
       // user cancelled picker
@@ -394,17 +416,29 @@ export default function Index() {
                     }
                     <p style={styles.productName}>
                       {video.productTitle || video.title || "Untitled"}
+                      {productList(video).length > 1 ? ` +${productList(video).length - 1} more` : ""}
                     </p>
                   </div>
 
-                  {/* Attach / Detach */}
+                  {/* Attach / manage products */}
                   <button
                     style={styles.attachBtn}
-                    onClick={() => video.variantId && video.variantId !== "" ? handleDetach(video.id) : handleAttachProduct(video.id)}
+                    onClick={() => handleAttachProduct(video.id)}
                     disabled={isSubmitting}
                   >
-                    {video.variantId && video.variantId !== "" ? "✕ Detach product" : "+ Attach products"}
+                    {productList(video).length > 0
+                      ? `Manage products (${productList(video).length})`
+                      : "+ Attach products"}
                   </button>
+                  {productList(video).length > 0 && (
+                    <button
+                      style={styles.detachLink}
+                      onClick={() => handleDetach(video.id)}
+                      disabled={isSubmitting}
+                    >
+                      Remove all products
+                    </button>
+                  )}
 
                   {/* Actions row */}
                   <div style={styles.actionsRow}>
@@ -701,6 +735,19 @@ const styles: Record<string, React.CSSProperties> = {
     width: "calc(100% - 24px)",
     textAlign: "center",
     transition: "border-color 0.15s, color 0.15s",
+  },
+
+  detachLink: {
+    margin: "0 12px 4px",
+    padding: "2px 0",
+    background: "transparent",
+    border: "none",
+    fontSize: "11px",
+    fontWeight: 600,
+    color: "#dc2626",
+    cursor: "pointer",
+    textAlign: "center",
+    width: "calc(100% - 24px)",
   },
 
   actionsRow: {
