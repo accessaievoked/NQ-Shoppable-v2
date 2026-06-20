@@ -111,21 +111,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (intent === "reorder") {
-    const direction = formData.get("direction") as "up" | "down";
-    const video = await db.video.findFirst({ where: { id: videoId, shop: session.shop } });
-    if (video) {
-      const adjacent = await db.video.findFirst({
-        where: {
-          shop: session.shop,
-          sortOrder: direction === "up" ? { lt: video.sortOrder } : { gt: video.sortOrder },
-        },
-        orderBy: { sortOrder: direction === "up" ? "desc" : "asc" },
-      });
-      if (adjacent) {
-        await db.video.update({ where: { id: video.id },    data: { sortOrder: adjacent.sortOrder } });
-        await db.video.update({ where: { id: adjacent.id }, data: { sortOrder: video.sortOrder } });
-      }
-    }
+    let order: string[] = [];
+    try { order = JSON.parse(formData.get("order") as string) || []; } catch { order = []; }
+    // Persist the new order as sortOrder = position (scoped to this shop so a
+    // video can only be reordered within its own store).
+    await Promise.all(
+      order.map((id, idx) =>
+        db.video.updateMany({ where: { id, shop: session.shop }, data: { sortOrder: idx } })
+      )
+    );
   }
 
   return null;
@@ -143,6 +137,35 @@ export default function Index() {
   const [search, setSearch] = useState(q);
   const [playingVideo, setPlayingVideo] = useState<{ streamUrl: string | null; videoUrl: string; title: string } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  // ── Reorder state ────────────────────────────────────────────────────────
+  // Local optimistic copy of the list so reordering feels instant; re-synced
+  // whenever the loader returns fresh data.
+  const [items, setItems] = useState(videos);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canReorder = !q; // reordering a filtered/searched subset would be confusing
+
+  useEffect(() => { setItems(videos); }, [videos]);
+
+  function reorder(newItems: typeof videos) {
+    setItems(newItems);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    // Debounce so rapid moves only trigger one save of the final order.
+    saveTimer.current = setTimeout(() => {
+      const fd = new FormData();
+      fd.set("intent", "reorder");
+      fd.set("order", JSON.stringify(newItems.map((v) => v.id)));
+      submit(fd, { method: "post" });
+    }, 500);
+  }
+
+  function moveItem(from: number, to: number) {
+    if (to < 0 || to >= items.length || from === to) return;
+    const a = [...items];
+    const [moved] = a.splice(from, 1);
+    a.splice(to, 0, moved);
+    reorder(a);
+  }
 
   // Play video whenever modal opens
   useEffect(() => {
@@ -290,6 +313,12 @@ export default function Index() {
             </div>
           </div>
 
+          {canReorder && videos.length > 1 && (
+            <p style={styles.reorderHint}>
+              Use ← / → on each video to set the order they appear in your carousel.
+            </p>
+          )}
+
           {/* ── Grid ─────────────────────────────────────────────── */}
           {videos.length === 0 ? (
             <p style={{ color: "#6b7280", fontSize: "14px", padding: "24px 0" }}>
@@ -297,7 +326,7 @@ export default function Index() {
             </p>
           ) : (
             <div style={styles.grid}>
-              {videos.map((video) => (
+              {items.map((video, i) => (
                 <div key={video.id} style={styles.card}>
 
                   {/* Thumbnail */}
@@ -335,6 +364,27 @@ export default function Index() {
                       </div>
                     )}
                   </div>
+
+                  {/* Reorder controls — set the order videos appear in the carousel */}
+                  {canReorder && (
+                    <div style={styles.orderBar}>
+                      <button
+                        style={{ ...styles.orderBtn, ...(i === 0 ? styles.orderBtnDisabled : {}) }}
+                        onClick={() => moveItem(i, i - 1)}
+                        disabled={i === 0}
+                        title="Move earlier"
+                        aria-label="Move earlier"
+                      >←</button>
+                      <span style={styles.orderPos}>#{i + 1}</span>
+                      <button
+                        style={{ ...styles.orderBtn, ...(i === items.length - 1 ? styles.orderBtnDisabled : {}) }}
+                        onClick={() => moveItem(i, i + 1)}
+                        disabled={i === items.length - 1}
+                        title="Move later"
+                        aria-label="Move later"
+                      >→</button>
+                    </div>
+                  )}
 
                   {/* Product row */}
                   <div style={styles.productRow}>
@@ -553,6 +603,50 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "13px",
     fontWeight: 700,
     letterSpacing: "0.02em",
+  },
+
+  reorderHint: {
+    fontSize: "12px",
+    color: "#6b7280",
+    margin: "0 0 14px",
+  },
+
+  orderBar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "10px",
+    padding: "7px 12px",
+    background: "#fafafa",
+    borderBottom: "1px solid #f3f4f6",
+  },
+
+  orderBtn: {
+    width: "30px",
+    height: "26px",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
+    background: "#fff",
+    color: "#374151",
+    cursor: "pointer",
+    fontSize: "15px",
+    lineHeight: 1,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  orderBtnDisabled: {
+    opacity: 0.4,
+    cursor: "default",
+  },
+
+  orderPos: {
+    fontSize: "12px",
+    fontWeight: 700,
+    color: "#6b7280",
+    minWidth: "30px",
+    textAlign: "center",
   },
 
   productRow: {

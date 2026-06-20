@@ -1,10 +1,17 @@
 /* ─── NQ Shoppable Videos ─────────────────────────────────────────── */
 
+/* Section heading — matched to claura.in (Poppins, pink) */
 .nq-section-title {
-  font-size: 1.4rem;
-  font-weight: 700;
+  font-family: 'Poppins', sans-serif;
+  font-size: 22px;
+  font-weight: 400;
+  color: #c9375a;
   margin: 0 0 16px 16px;
-  letter-spacing: -0.02em;
+  letter-spacing: normal;
+}
+
+@media (min-width: 768px) {
+  .nq-section-title { font-size: 30px; }
 }
 
 /* ─── Carousel Track ─────────────────────────────────────────────── */
