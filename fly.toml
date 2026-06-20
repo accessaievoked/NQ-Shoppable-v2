@@ -7,9 +7,7 @@ primary_region = "sin"
   PORT = "3000"
   NODE_ENV = "production"
 
-[mounts]
-  source = "nq_data"
-  destination = "/data"
+# No volume needed — data now lives in Neon Postgres (set via DATABASE_URL secret).
 
 [http_service]
   internal_port = 3000
@@ -20,8 +18,11 @@ primary_region = "sin"
 
   [http_service.concurrency]
     type = "connections"
-    hard_limit = 25
-    soft_limit = 20
+    # Storefront endpoints are tiny, fast reads (~10ms), so a single machine can
+    # handle far more than the old 25. soft_limit triggers auto-starting a 2nd
+    # machine under sustained load; hard_limit is the absolute per-machine cap.
+    soft_limit = 200
+    hard_limit = 250
 
 [[vm]]
   memory = "512mb"
