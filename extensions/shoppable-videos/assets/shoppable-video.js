@@ -658,6 +658,10 @@
       }
 
       const html = this.videos.map((v, i) => {
+        const discount = v.compareAtPrice && v.price
+          ? Math.round((1 - v.price / v.compareAtPrice) * 100)
+          : null;
+
         // Prefer HLS stream for inline playback
         const videoSrc = v.streamUrl || v.videoUrl;
         const isHls    = !!(v.streamUrl);
@@ -686,6 +690,14 @@
                   ${v.viewCount}
                 </div>
               ` : ''}
+            </div>
+            <div class="nq-card-info">
+              <p class="nq-card-title">${v.productTitle || v.title || ''}</p>
+              <div class="nq-card-prices">
+                ${v.price ? `<span class="nq-card-price">${formatPrice(v.price, v.currency)}</span>` : ''}
+                ${v.compareAtPrice ? `<span class="nq-card-compare-price">${formatPrice(v.compareAtPrice, v.currency)}</span>` : ''}
+                ${discount ? `<span class="nq-card-discount">${discount}% off</span>` : ''}
+              </div>
             </div>
           </div>
         `;
