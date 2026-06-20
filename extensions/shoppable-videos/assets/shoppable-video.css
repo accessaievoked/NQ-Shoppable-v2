@@ -931,42 +931,6 @@ body.nq-modal-open #shopify-section-header {
 }
 .nq-shop-now:hover { background: #f7f7f7; }
 
-/* Multiple products — stacked clickable cards instead of one card + button */
-.nq-product-overlay.nq-multi {
-  background: transparent;
-  box-shadow: none;
-  border-radius: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 58%;
-  scrollbar-width: none;
-}
-.nq-product-overlay.nq-multi::-webkit-scrollbar { display: none; }
-
-.nq-product-overlay.nq-multi .nq-prod-card {
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.22);
-  text-decoration: none;
-  color: inherit;
-  padding: 8px 10px;
-}
-.nq-product-overlay.nq-multi .nq-prod-card:active { transform: scale(0.99); }
-
-.nq-prod-cta {
-  flex-shrink: 0;
-  align-self: center;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #111111;
-  white-space: nowrap;
-}
-
 @media (max-width: 700px) {
   .nq-side-actions { right: 10px; bottom: 165px; }
   .nq-product-overlay { left: 10px; right: 10px; bottom: 12px; }

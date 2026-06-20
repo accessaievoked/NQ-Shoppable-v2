@@ -41,36 +41,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
         price: true,
         compareAtPrice: true,
         currency: true,
-        products: true,
         viewCount: true,
       },
     });
 
     const origin = new URL(request.url).origin;
-    const videosWithAbsoluteUrls = videos.map((v) => {
-      // Parse the products JSON; fall back to the single legacy product fields
-      // so existing videos (saved before multi-product) still work.
-      let products: any[] = [];
-      try { products = JSON.parse(v.products || "[]"); } catch { products = []; }
-      if (!Array.isArray(products) || products.length === 0) {
-        if (v.productTitle || v.variantId || v.productUrl) {
-          products = [{
-            productTitle: v.productTitle,
-            productImageUrl: v.productImageUrl,
-            productUrl: v.productUrl,
-            variantId: v.variantId,
-            price: v.price,
-            compareAtPrice: v.compareAtPrice,
-            currency: v.currency,
-          }];
-        }
-      }
-      return {
-        ...v,
-        videoUrl: v.videoUrl?.startsWith("/") ? `${origin}${v.videoUrl}` : v.videoUrl,
-        products, // parsed array overrides the raw JSON string
-      };
-    });
+    const videosWithAbsoluteUrls = videos.map((v) => ({
+      ...v,
+      videoUrl: v.videoUrl?.startsWith("/") ? `${origin}${v.videoUrl}` : v.videoUrl,
+    }));
 
     return new Response(JSON.stringify({ videos: videosWithAbsoluteUrls }), { status: 200, headers });
   } catch (err) {
