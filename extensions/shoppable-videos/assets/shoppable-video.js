@@ -125,6 +125,8 @@
     const peekNextImg  = document.getElementById('nq-peek-next-img');
     const arrowPrev    = document.getElementById('nq-arrow-prev');
     const arrowNext    = document.getElementById('nq-arrow-next');
+    const likeBtn      = document.getElementById('nq-like-btn');
+    const shareBtn     = document.getElementById('nq-share-btn');
     const swiperWrapper = document.getElementById('nq-swiper-wrapper');
 
     if (!modal || !swiperWrapper) return;
@@ -133,6 +135,7 @@
     let slotMap        = {};   // slideIndex → { video, hls } currently mounted
     let videoPool      = [];   // small set of reusable <video> elements (created once)
     let isMuted        = true;
+    const likedSet     = new Set(); // video ids the user has "liked" (visual toggle)
     // Only the active slide + immediate neighbours get a real <video>. Browsers
     // cap the number of media players per page and connections per origin, so we
     // never create one <video> per library item — we recycle a tiny pool.
@@ -343,55 +346,26 @@
       const card = document.getElementById('nq-product-card');
       if (!card) return;
 
-      const discount = v.compareAtPrice && v.price
-        ? Math.round((1 - v.price / v.compareAtPrice) * 100)
-        : null;
-
+      // claura-style product card: image + name + price, with a SHOP NOW
+      // button that links straight to the product page.
       card.innerHTML = `
-        <div class="nq-product-inner">
-          <div class="nq-mobile-bar">
-            ${v.productImageUrl ? `<img class="nq-mobile-thumb" src="${v.productImageUrl}" alt="${v.productTitle || ''}" loading="lazy">` : ''}
-            <div class="nq-mobile-info">
-              <p class="nq-product-name" style="font-size:13px;margin:0 0 3px;">${v.productTitle || 'View Product'}</p>
-              <div class="nq-product-prices">
-                ${v.price ? `<p class="nq-product-price" style="font-size:13px;">${formatPrice(v.price, v.currency)}</p>` : ''}
-                ${v.compareAtPrice ? `<p class="nq-product-compare" style="font-size:12px;">${formatPrice(v.compareAtPrice, v.currency)}</p>` : ''}
-              </div>
-            </div>
-            ${v.productUrl ? `<a class="nq-mobile-shop" href="${v.productUrl}">Shop Now</a>` : ''}
-          </div>
+        <div class="nq-prod-card">
           ${v.productImageUrl
-            ? `<img class="nq-product-img-full" src="${v.productImageUrl}" alt="${v.productTitle || ''}" loading="lazy">`
-            : '<div class="nq-product-img-placeholder"></div>'}
-          <div class="nq-product-details">
-            <p class="nq-product-name">${v.productTitle || 'View Product'}</p>
-            <div class="nq-product-prices">
-              ${v.price ? `<p class="nq-product-price">${formatPrice(v.price, v.currency)}</p>` : ''}
-              ${v.compareAtPrice ? `<p class="nq-product-compare">${formatPrice(v.compareAtPrice, v.currency)}</p>` : ''}
-              ${discount ? `<span class="nq-product-badge">${discount}% off</span>` : ''}
+            ? `<img class="nq-prod-img" src="${v.productImageUrl}" alt="${v.productTitle || ''}" loading="lazy">`
+            : '<div class="nq-prod-img nq-prod-img-ph"></div>'}
+          <div class="nq-prod-info">
+            <p class="nq-prod-name">${v.productTitle || 'View Product'}</p>
+            <div class="nq-prod-prices">
+              ${v.price ? `<span class="nq-prod-price">${formatPrice(v.price, v.currency)}</span>` : ''}
+              ${v.compareAtPrice ? `<span class="nq-prod-compare">${formatPrice(v.compareAtPrice, v.currency)}</span>` : ''}
             </div>
-            <hr class="nq-divider" />
-          </div>
-          <div class="nq-actions">
-            ${v.productUrl ? `<a class="nq-btn nq-btn-info" href="${v.productUrl}">More info</a>` : ''}
-            ${v.variantId ? `
-              <button class="nq-btn nq-btn-atc" data-variant="${v.variantId}" data-video-id="${v.id}" onclick="NQShoppable.addToCart(this)">Add to cart</button>
-              <a class="nq-btn nq-btn-cart" href="/cart/${v.variantId}:1?checkout" title="Checkout">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
-                  <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
-                </svg>
-              </a>
-            ` : ''}
           </div>
         </div>
+        <a class="nq-shop-now" href="${v.productUrl || '#'}">Shop Now</a>
       `;
 
-      const mobileCartBtn = document.getElementById('nq-mobile-cart');
-      if (mobileCartBtn) {
-        mobileCartBtn.href         = v.variantId ? `/cart/${v.variantId}:1?checkout` : '#';
-        mobileCartBtn.style.display = v.variantId ? 'flex' : 'none';
-      }
+      // Reflect the like state for the current video
+      if (likeBtn) likeBtn.classList.toggle('nq-liked', likedSet.has(v.id));
     }
 
     // ── Open / Close ──────────────────────────────────────────────────────
@@ -525,6 +499,35 @@
       });
     });
 
+    // ── Like (visual toggle, remembered per video for this session) ──────
+    if (likeBtn) {
+      likeBtn.addEventListener('click', () => {
+        const v = modalVideos[modalIndex];
+        if (!v) return;
+        if (likedSet.has(v.id)) likedSet.delete(v.id); else likedSet.add(v.id);
+        likeBtn.classList.toggle('nq-liked', likedSet.has(v.id));
+      });
+    }
+
+    // ── Share — native share sheet, falling back to copying the product link
+    if (shareBtn) {
+      shareBtn.addEventListener('click', async () => {
+        const v = modalVideos[modalIndex];
+        if (!v) return;
+        let url = v.productUrl || location.href;
+        if (url.charAt(0) === '/') url = location.origin + url;
+        if (navigator.share) {
+          try { await navigator.share({ title: v.productTitle || document.title, url }); } catch (e) {}
+        } else {
+          try {
+            await navigator.clipboard.writeText(url);
+            const label = shareBtn.parentElement && shareBtn.parentElement.querySelector('.nq-side-label');
+            if (label) { const o = label.textContent; label.textContent = 'Copied!'; setTimeout(() => { label.textContent = o; }, 1500); }
+          } catch (e) {}
+        }
+      });
+    }
+
     window._nqOpenModal = openModal;
   }
 
@@ -568,18 +571,47 @@
       this.container.appendChild(next);
 
       const amount = () => Math.max(220, Math.round(track.clientWidth * 0.85));
-      prev.addEventListener('click', () => track.scrollBy({ left: -amount(), behavior: 'smooth' }));
-      next.addEventListener('click', () => track.scrollBy({ left: amount(), behavior: 'smooth' }));
+      // Manual smooth scroll — native scrollBy({behavior:'smooth'}) is unreliable
+      // on snap tracks in some themes, so we animate scrollLeft ourselves.
+      const smoothScrollBy = (delta) => {
+        const start = track.scrollLeft;
+        const target = Math.max(0, Math.min(track.scrollWidth - track.clientWidth, start + delta));
+        const dur = 360, t0 = performance.now();
+        const step = (t) => {
+          const p = Math.min(1, (t - t0) / dur);
+          track.scrollLeft = start + (target - start) * (1 - Math.pow(1 - p, 3));
+          if (p < 1) requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      };
+      prev.addEventListener('click', () => smoothScrollBy(-amount()));
+      next.addEventListener('click', () => smoothScrollBy(amount()));
 
       const update = () => {
         const max = track.scrollWidth - track.clientWidth - 4;
-        prev.dataset.hidden = track.scrollLeft <= 4 ? 'true' : 'false';
-        next.dataset.hidden = (max <= 0 || track.scrollLeft >= max) ? 'true' : 'false';
+        const scrollable = max > 4;
+        // Only dim an arrow when the carousel is scrollable AND sitting at that
+        // edge. When everything fits (not scrollable) both stay fully visible.
+        prev.dataset.hidden = (scrollable && track.scrollLeft <= 4) ? 'true' : 'false';
+        next.dataset.hidden = (scrollable && track.scrollLeft >= max) ? 'true' : 'false';
       };
       track.addEventListener('scroll', update, { passive: true });
       window.addEventListener('resize', update);
       setTimeout(update, 150); // re-check once thumbnails have laid out
       update();
+
+      // Reveal the arrows on cursor activity, then auto-hide after a short pause.
+      const el = this.container;
+      let hideTimer = null;
+      const reveal = () => {
+        el.classList.add('nq-arrows-visible');
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => el.classList.remove('nq-arrows-visible'), 2000);
+      };
+      el.addEventListener('mouseenter', reveal);
+      el.addEventListener('mousemove', reveal);
+      el.addEventListener('click', reveal);
+      el.addEventListener('mouseleave', () => { clearTimeout(hideTimer); el.classList.remove('nq-arrows-visible'); });
     }
 
     preloadFirstCard() {
@@ -626,10 +658,6 @@
       }
 
       const html = this.videos.map((v, i) => {
-        const discount = v.compareAtPrice && v.price
-          ? Math.round((1 - v.price / v.compareAtPrice) * 100)
-          : null;
-
         // Prefer HLS stream for inline playback
         const videoSrc = v.streamUrl || v.videoUrl;
         const isHls    = !!(v.streamUrl);
@@ -658,14 +686,6 @@
                   ${v.viewCount}
                 </div>
               ` : ''}
-            </div>
-            <div class="nq-card-info">
-              <p class="nq-card-title">${v.productTitle || v.title || ''}</p>
-              <div class="nq-card-prices">
-                ${v.price ? `<p class="nq-card-price">${formatPrice(v.price, v.currency)}</p>` : ''}
-                ${v.compareAtPrice ? `<p class="nq-card-compare-price">${formatPrice(v.compareAtPrice, v.currency)}</p>` : ''}
-                ${discount ? `<span class="nq-card-discount">${discount}% off</span>` : ''}
-              </div>
             </div>
           </div>
         `;

@@ -11,8 +11,20 @@
 .nq-shoppable-carousel {
   position: relative;
   width: 100%;
+  max-width: 100%;
   overflow: hidden;
   padding: 8px 0 16px;
+}
+
+/* Some themes (e.g. Horizon) wrap app blocks in a flex container whose items
+   default to min-width:auto and won't shrink — so the carousel grew to its full
+   content width instead of scrolling. Cap the block to its parent's width so
+   the track scrolls inside it. */
+.shopify-app-block:has(.nq-shoppable-carousel),
+.shopify-block:has(.nq-shoppable-carousel) {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* ─── Carousel navigation arrows ─────────────────────────────────── */
@@ -32,13 +44,27 @@
   justify-content: center;
   cursor: pointer;
   z-index: 5;
-  transition: opacity 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+  /* Hidden until the cursor is active over the carousel (JS toggles
+     .nq-arrows-visible), then fades in. */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
 .nq-carousel-arrow:hover { background: #f6f6f6; box-shadow: 0 3px 14px rgba(0,0,0,0.24); }
 .nq-carousel-arrow-prev { left: 8px; }
 .nq-carousel-arrow-next { right: 8px; }
-.nq-carousel-arrow[data-hidden="true"] { opacity: 0; pointer-events: none; }
+
+/* Reveal on cursor activity */
+.nq-shoppable-carousel.nq-arrows-visible .nq-carousel-arrow {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Edge arrow stays dimmed (and unclickable) even while revealed */
+.nq-shoppable-carousel.nq-arrows-visible .nq-carousel-arrow[data-hidden="true"] {
+  opacity: 0.35;
+  pointer-events: none;
+}
 
 @media (min-width: 768px) {
   .nq-carousel-arrow { display: flex; }
@@ -48,7 +74,9 @@
   display: flex;
   gap: 10px;
   overflow-x: auto;
-  scroll-snap-type: x mandatory;
+  /* proximity (not mandatory) so the arrow buttons can animate the scroll;
+     mandatory snap fights programmatic scrolling */
+  scroll-snap-type: x proximity;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
   padding: 0 16px 8px;
@@ -785,4 +813,116 @@ body.nq-modal-open #shopify-section-header {
   .nq-video-card { flex: 0 0 270px; }
   .nq-thumb-wrap { width: 270px; height: 405px; }
   .nq-skeleton { flex: 0 0 270px; height: 445px; }
+}
+
+/* ─── Modal: single-column reel with product overlay (claura style) ─ */
+
+/* Single column — hide the old side peek thumbnails */
+.nq-peek { display: none !important; }
+
+/* Right-side action buttons (mute / like / share) over the video */
+.nq-side-actions {
+  position: absolute;
+  right: 12px;
+  bottom: 150px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  z-index: 9;
+}
+.nq-side-item { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.nq-side-btn {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.45);
+  border: none;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background 0.2s ease, transform 0.12s ease;
+}
+.nq-side-btn:hover { background: rgba(0,0,0,0.65); }
+.nq-side-btn:active { transform: scale(0.92); }
+.nq-side-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+}
+/* Mute button now lives in the side stack (override its old absolute pos) */
+.nq-side-actions .nq-mute-btn {
+  position: static;
+  inset: auto;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+}
+/* Liked state — filled red heart */
+.nq-like-btn.nq-liked { color: #ff3b5c; }
+.nq-like-btn.nq-liked svg { fill: #ff3b5c; }
+
+/* Product card overlaid at the bottom of the video */
+.nq-product-overlay {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 14px;
+  z-index: 9;
+  background: #fff;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.30);
+}
+.nq-prod-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+}
+.nq-prod-img {
+  width: 52px;
+  height: 62px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+  background: #f0f0f0;
+}
+.nq-prod-img-ph { background: #eee; }
+.nq-prod-info { flex: 1; min-width: 0; }
+.nq-prod-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin: 0 0 4px;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.nq-prod-prices { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nq-prod-price { font-size: 14px; font-weight: 700; color: #1a1a1a; margin: 0; }
+.nq-prod-compare { font-size: 12.5px; color: #9a9a9a; text-decoration: line-through; margin: 0; }
+.nq-shop-now {
+  display: block;
+  text-align: center;
+  padding: 13px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #1a1a1a;
+  text-decoration: none;
+  border-top: 1px solid #eee;
+}
+.nq-shop-now:hover { background: #f7f7f7; }
+
+@media (max-width: 700px) {
+  .nq-side-actions { right: 10px; bottom: 165px; }
+  .nq-product-overlay { left: 10px; right: 10px; bottom: 12px; }
 }
