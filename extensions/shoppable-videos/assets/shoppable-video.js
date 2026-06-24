@@ -306,7 +306,25 @@
       Object.keys(slotMap).map(Number).forEach(releaseSlot);
     }
 
+    // Load slide thumbnails only near the active slide and free far-away ones.
+    // Without this, a large library (e.g. 100+ videos) loads every thumbnail at
+    // once when the modal opens, which crashes mobile tabs (the "page refresh").
+    const THUMB_WINDOW = 2;
+    function manageThumbs(activeIndex) {
+      const slides = swiperWrapper.children;
+      for (let i = 0; i < slides.length; i++) {
+        const img = slides[i].querySelector('.nq-slide-thumb');
+        if (!img) continue;
+        if (Math.abs(i - activeIndex) <= THUMB_WINDOW) {
+          if (!img.getAttribute('src') && img.dataset.src) img.src = img.dataset.src;
+        } else if (img.getAttribute('src')) {
+          img.removeAttribute('src'); // free decoded image memory for distant slides
+        }
+      }
+    }
+
     function manageSlides(activeIndex) {
+      manageThumbs(activeIndex);
       const total = modalVideos.length;
       const win = new Set();
       for (let i = Math.max(0, activeIndex - PRELOAD_RANGE); i <= Math.min(total - 1, activeIndex + PRELOAD_RANGE); i++) {
@@ -385,7 +403,7 @@
       // the media-player count tiny regardless of how many videos exist.
       swiperWrapper.innerHTML = videos.map((v) => `
         <div class="swiper-slide nq-video-slide">
-          ${v.thumbnailUrl ? `<img class="nq-slide-thumb" src="${v.thumbnailUrl}" alt="">` : ''}
+          ${v.thumbnailUrl ? `<img class="nq-slide-thumb" data-src="${v.thumbnailUrl}" alt="" decoding="async">` : ''}
           <div class="nq-video-loading"><div class="nq-spinner"></div></div>
           <button class="nq-play-overlay" aria-label="Play video" tabindex="-1">
             <svg width="30" height="30" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>

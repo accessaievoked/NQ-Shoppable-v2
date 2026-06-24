@@ -332,15 +332,25 @@
 }
 
 /* ─── Swiper inside video panel ──────────────────────────────────── */
-.nq-video-swiper {
-  width: 100%;
-  height: 100%;
+/* The modal reuses Swiper's generic class names (.swiper, .swiper-wrapper,
+   .swiper-slide). Many storefront themes ALSO ship Swiper with a global rule
+   like `.swiper { height: 400px }`, which leaks into this modal and pins the
+   swiper to the theme's height — leaving a black band below the video inside the
+   9:16 panel. High-specificity selectors + !important force our full-height
+   layout to win over any theme rule, anchored to the (position:relative) panel. */
+.nq-modal-video-panel .nq-video-swiper {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
 }
+.nq-modal-video-panel .nq-video-swiper .swiper-wrapper { height: 100% !important; }
+.nq-modal-video-panel .nq-video-swiper .swiper-slide { height: 100% !important; }
 
-.nq-video-slide {
+.nq-modal-video-panel .nq-video-slide {
   position: relative;
   width: 100%;
-  height: 100%;
+  height: 100% !important;
   overflow: hidden;
   background: #000;
 }
