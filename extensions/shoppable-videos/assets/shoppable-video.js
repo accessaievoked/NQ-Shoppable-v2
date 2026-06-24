@@ -566,10 +566,10 @@
       await this.fetchVideos();
       // On a product page, show only videos linked to that product.
       if (!this.applyProductFilter()) return;
-      this.render();
-      this.addCarouselArrows();
-      this.preloadFirstCard();
-      this.setupIntersectionObserver();
+      // Layout-aware renderer (all 14 tile types). It builds the right structure
+      // for the chosen tile_type and wires memory-safe inline video + click→modal
+      // itself, so the old default-only helpers are no longer called here.
+      this.renderLayout();
     }
 
     // On a PDP the block carries data-product-id (the storefront product id).
@@ -593,11 +593,9 @@
         return idMatch || handleMatch;
       });
       if (this.videos.length === 0) {
-        this.container.style.display = 'none';
-        const prev = this.container.previousElementSibling;
-        if (prev && prev.classList && prev.classList.contains('nq-section-title')) {
-          prev.style.display = 'none';
-        }
+        // Hide the whole section (heading + carousel) when this product has none.
+        const section = this.container.closest('.nq-section') || this.container;
+        section.style.display = 'none';
         return false;
       }
       return true;
@@ -708,73 +706,285 @@
       }
     }
 
-    render() {
-      const track = this.container.querySelector('.nq-carousel-track');
-      if (!track) return;
+    // Settings come from the block's data-* attributes (see video-carousel.liquid)
+    settings() {
+      const d = this.container.dataset;
+      return {
+        tile:      d.tileType || 'product_below_3',
+        cardW:     parseInt(d.cardWidth, 10)  || 200,
+        cardH:     parseInt(d.cardHeight, 10) || 340,
+        shopBtn:   d.shopBtnColor || '#000000',
+        autoplay:  d.autoplay !== 'false',
+        showViews: d.showViews !== 'false',
+      };
+    }
 
-      if (this.videos.length === 0) {
-        track.innerHTML = '<p class="nq-empty">No videos configured yet.</p>';
-        return;
+    // Field accessors so the layout builders read V2's native video shape.
+    vMedia(v)   { return v.streamUrl || v.videoUrl; }
+    vIsHls(v)   { return !!v.streamUrl; }
+    vThumb(v)   { return v.thumbnailUrl || ''; }
+    vTitle(v)   { return v.productTitle || v.title || ''; }
+    vImage(v)   { return v.productImageUrl || ''; }
+    vViews(v)   { return v.viewCount || 0; }
+    vPrice(v)   { return v.price != null ? formatPrice(v.price, v.currency) : ''; }
+    vCompare(v) { return v.compareAtPrice != null ? formatPrice(v.compareAtPrice, v.currency) : ''; }
+    vDiscount(v){ return (v.compareAtPrice && v.price) ? Math.round((1 - v.price / v.compareAtPrice) * 100) : 0; }
+
+    openAt(idx) {
+      if (window._nqOpenModal) window._nqOpenModal(this.videos, idx);
+      this.trackEvent('VIEW', this.videos[idx] && this.videos[idx].id);
+    }
+
+    // ── Layout dispatcher (all 14 tile types) ──────────────────────────
+    renderLayout() {
+      const c = this.container, s = this.settings();
+      c.classList.add('nq-tile-type-' + s.tile);
+      let track = c.querySelector('.nq-carousel-track');
+      if (!track) { track = document.createElement('div'); track.className = 'nq-carousel-track'; c.appendChild(track); }
+      if (!this.videos.length) { track.innerHTML = '<p class="nq-empty" style="padding:20px">No videos configured yet.</p>'; return; }
+      track.innerHTML = '';
+      const t = s.tile;
+      if (t === 'hero_slide') return this.renderHero(track, s);
+      if (t === '3d_navigation') return this.render3D(track, s);
+      if (t === 'grid_theme_border' || t === 'grid_no_border' || t === 'feed_on_scroll') return this.renderGrid(track, s);
+      return this.renderCarousel(track, s);
+    }
+
+    // ── Windowed inline video — memory-safe for large catalogs ─────────
+    // Each card shows a lazy <img>; a real <video> is created only while the card
+    // is in view and fully destroyed when it scrolls away, so only the handful on
+    // screen are ever live (this is what keeps mobile from running out of memory).
+    observeCardVideo(card, src, isHls, s) {
+      if (!src || !s.autoplay || !('IntersectionObserver' in window)) return;
+      let vid = null;
+      const io = new IntersectionObserver((entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) {
+            if (!vid) {
+              vid = document.createElement('video');
+              vid.className = 'nq-video-el nq-hover-video';
+              vid.muted = true; vid.loop = true; vid.playsInline = true; vid.preload = 'auto';
+              vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;';
+              const firstImg = card.querySelector('img');
+              card.insertBefore(vid, firstImg ? firstImg.nextSibling : card.firstChild);
+              const hls = attachStream(vid, src, isHls, () => {});
+              if (hls) cardHlsMap.set(vid, hls);
+            }
+            vid.play().catch(() => {});
+          } else if (vid) {
+            const hls = cardHlsMap.get(vid);
+            if (hls) { try { hls.destroy(); } catch (x) {} cardHlsMap.delete(vid); }
+            try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (x) {}
+            vid.remove(); vid = null;
+          }
+        });
+      }, { threshold: 0.4, rootMargin: '200px' });
+      io.observe(card);
+    }
+
+    // Build one .nq-card from a V2 video object — lazy <img> thumbnail, video on demand.
+    buildCard(v, i, s) {
+      const card = document.createElement('div');
+      card.className = 'nq-card nq-tile-' + s.tile;
+      const thumb = this.vThumb(v), src = this.vMedia(v), isHls = this.vIsHls(v);
+      const img = document.createElement('img');
+      img.className = 'nq-video-el';
+      img.loading = 'lazy'; img.decoding = 'async';
+      img.alt = this.vTitle(v);
+      if (thumb) img.src = thumb;
+      card.appendChild(img);
+      card.onclick = () => this.openAt(i);
+      this.observeCardVideo(card, src, isHls, s);
+      if (s.showViews) {
+        const views = document.createElement('div');
+        views.className = 'nq-views';
+        views.innerHTML = '&#128065; ' + this.vViews(v);
+        card.appendChild(views);
       }
+      this.applyTile(card, v, s);
+      return card;
+    }
 
-      const html = this.videos.map((v, i) => {
-        const discount = v.compareAtPrice && v.price
-          ? Math.round((1 - v.price / v.compareAtPrice) * 100)
-          : null;
+    // Per-tile sizing + product overlays (V2 fields).
+    applyTile(card, v, s) {
+      const cardW = s.cardW, cardH = s.cardH, t = s.tile;
+      const img = this.vImage(v), title = this.vTitle(v), price = this.vPrice(v),
+            compare = this.vCompare(v), disc = this.vDiscount(v);
+      const ovTransparent = () => {
+        const ov = document.createElement('div'); ov.className = 'nq-ov-transparent';
+        ov.innerHTML = (img ? '<img src="' + img + '" class="nq-ov-thumb">' : '') + '<span class="nq-ov-title">' + title + '</span>';
+        card.appendChild(ov);
+      };
+      switch (t) {
+        case 'img_transparent_text_overlay_3':
+        case 'img_transparent_text_overlay_2':
+        case 'feed_view_more':
+          card.style.cssText += 'width:' + cardW + 'px;height:' + cardH + 'px;'; ovTransparent(); break;
+        case 'img_opaque_text_overlay_3': {
+          card.style.cssText += 'width:' + cardW + 'px;height:' + cardH + 'px;overflow:visible;';
+          const ov = document.createElement('div'); ov.className = 'nq-ov-opaque';
+          ov.innerHTML = (img ? '<img src="' + img + '" class="nq-ov-thumb">' : '') +
+            '<div class="nq-ov-text"><span class="nq-ov-title">' + title + '</span><span class="nq-ov-price">' + price + '</span></div>';
+          card.appendChild(ov); break;
+        }
+        case 'single_tile_no_overlay':
+          card.style.cssText += 'width:' + Math.round(cardW * 0.5) + 'px;height:' + Math.round(cardH * 0.65) + 'px;'; break;
+        case 'product_below_3':
+        case 'product_below_2': {
+          card.style.cssText += 'width:' + cardW + 'px;height:' + cardH + 'px;overflow:visible;';
+          let dh = '';
+          if (compare && disc > 0) dh = '<span class="nq-orig-price">' + compare + '</span><span class="nq-disc-badge">' + disc + '% off</span>';
+          const info = document.createElement('div'); info.className = 'nq-below-info';
+          info.innerHTML = '<p class="nq-below-title">' + title + '</p><p class="nq-below-price">' + price + ' ' + dh + '</p>';
+          card.appendChild(info); break;
+        }
+        case 'story_format':
+          card.style.cssText += 'width:110px;height:110px;border-radius:50%;';
+          { const vw = card.querySelector('.nq-views'); if (vw) vw.style.display = 'none'; } break;
+        case 'feed_on_scroll': {
+          card.classList.add('nq-scroll-fade');
+          let pr = price; if (compare && disc > 0) pr += ' <span class="nq-orig-price">' + compare + '</span>';
+          const info = document.createElement('div'); info.className = 'nq-below-info';
+          info.innerHTML = '<p class="nq-below-title">' + title + '</p><p class="nq-below-price">' + pr + '</p>';
+          card.appendChild(info); break;
+        }
+        case 'grid_theme_border': card.style.border = '3px solid ' + s.shopBtn; break;
+        case 'grid_no_border': card.style.borderRadius = '0'; break;
+        case '3d_navigation': card.style.cssText += 'width:' + cardW + 'px;height:' + cardH + 'px;'; ovTransparent(); break;
+        case 'minimal':
+        default: card.style.cssText += 'width:' + cardW + 'px;height:' + cardH + 'px;'; break;
+      }
+    }
 
-        // Prefer HLS stream for inline playback
-        const videoSrc = v.streamUrl || v.videoUrl;
-        const isHls    = !!(v.streamUrl);
+    // ── Horizontal carousel (most card-row tile types) ──
+    renderCarousel(track, s) {
+      track.className = 'nq-carousel-track nq-carousel';
+      this.videos.forEach((v, i) => track.appendChild(this.buildCard(v, i, s)));
+      if (s.tile === 'feed_view_more') {
+        const wrap = document.createElement('div'); wrap.className = 'nq-view-more-wrap';
+        wrap.innerHTML = '<button class="nq-view-more-btn" type="button">VIEW MORE ⌄</button>';
+        track.parentNode.appendChild(wrap);
+      }
+      this.attachScrollArrows(track, s);
+    }
 
-        return `
-          <div class="nq-video-card" data-index="${i}" role="button" tabindex="0" aria-label="Play video: ${v.productTitle || v.title || ''}">
-            <div class="nq-thumb-wrap">
-              ${v.thumbnailUrl
-                ? `<img class="nq-thumb" src="${v.thumbnailUrl}" alt="${v.productTitle || ''}" loading="lazy">`
-                : '<div class="nq-thumb" style="background:#222;"></div>'}
-              <video
-                class="nq-inline-video"
-                data-src="${videoSrc}"
-                data-hls="${isHls}"
-                poster="${v.thumbnailUrl || ''}"
-                muted
-                playsinline
-                loop
-                preload="none"
-              ></video>
-              ${v.viewCount ? `
-                <div class="nq-view-count">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="white">
-                    <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
-                  </svg>
-                  ${v.viewCount}
-                </div>
-              ` : ''}
-            </div>
-            <div class="nq-card-info">
-              <p class="nq-card-title">${v.productTitle || v.title || ''}</p>
-              <div class="nq-card-prices">
-                ${v.price ? `<span class="nq-card-price">${formatPrice(v.price, v.currency)}</span>` : ''}
-                ${v.compareAtPrice ? `<span class="nq-card-compare-price">${formatPrice(v.compareAtPrice, v.currency)}</span>` : ''}
-                ${discount ? `<span class="nq-card-discount">${discount}% off</span>` : ''}
-              </div>
-            </div>
-          </div>
-        `;
-      }).join('');
+    // ── Grid layouts ──
+    renderGrid(track, s) {
+      track.className = 'nq-carousel-track nq-grid';
+      this.videos.forEach((v, i) => track.appendChild(this.buildCard(v, i, s)));
+      if (s.tile === 'feed_on_scroll' && 'IntersectionObserver' in window) {
+        const io = new IntersectionObserver((entries) => {
+          entries.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('nq-visible'); io.unobserve(e.target); } });
+        }, { threshold: 0.12 });
+        track.querySelectorAll('.nq-scroll-fade').forEach((c) => io.observe(c));
+      }
+    }
 
-      track.innerHTML = html;
+    // ── 3D coverflow ──
+    render3D(track, s) {
+      track.className = 'nq-carousel-track';
+      const wrap = document.createElement('div'); wrap.className = 'nq-3d-wrap';
+      const prev = document.createElement('button'); prev.className = 'nq-3d-prev'; prev.type = 'button'; prev.innerHTML = '❮';
+      const next = document.createElement('button'); next.className = 'nq-3d-next'; next.type = 'button'; next.innerHTML = '❯';
+      const inner = document.createElement('div'); inner.className = 'nq-3d-track';
+      this.videos.forEach((v, i) => inner.appendChild(this.buildCard(v, i, s)));
+      wrap.appendChild(prev); wrap.appendChild(inner); wrap.appendChild(next);
+      track.appendChild(wrap);
+      const cards = inner.querySelectorAll('.nq-card');
+      let active = Math.floor(cards.length / 2);
+      const cardW = s.cardW;
+      const render = () => {
+        cards.forEach((card, i) => {
+          const diff = i - active, abs = Math.abs(diff);
+          card.style.cssText += ';transform:translateX(' + (diff * cardW * 0.68) + 'px) translateZ(' + (abs ? -100 : 0) + 'px) rotateY(' + (diff * -24) + 'deg) scale(' + (abs === 0 ? 1 : abs === 1 ? 0.8 : 0.65) + ');opacity:' + (abs === 0 ? 1 : abs === 1 ? 0.65 : 0.4) + ';z-index:' + (20 - abs) + ';transition:all 0.4s cubic-bezier(.4,0,.2,1)';
+        });
+      };
+      prev.onclick = () => { if (active > 0) { active--; render(); } };
+      next.onclick = () => { if (active < cards.length - 1) { active++; render(); } };
+      render();
+    }
 
-      // Click & keyboard → open modal
-      track.querySelectorAll('.nq-video-card').forEach((card) => {
-        const open = () => {
-          const idx = parseInt(card.dataset.index, 10);
-          if (window._nqOpenModal) window._nqOpenModal(this.videos, idx);
-          this.trackEvent('VIEW', this.videos[idx]?.id);
-        };
-        card.addEventListener('click', open);
-        card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') open(); });
-      });
+    // ── Hero featured + side strip (desktop) / swipe reel (mobile) ──
+    renderHero(track, s) {
+      track.className = 'nq-carousel-track';
+      const cardH = s.cardH;
+      const isMobile = window.innerWidth <= 767;
+      const wrap = document.createElement('div'); wrap.className = 'nq-hero-slide-wrap';
+      track.appendChild(wrap);
+      let heroIndex = 0;
+      const setActive = (idx) => {
+        heroIndex = idx;
+        if (!isMobile) {
+          const hv = wrap.querySelector('.nq-hero-video');
+          if (hv) { hv.src = this.vMedia(this.videos[idx]); hv.load(); hv.play().catch(() => {}); }
+          wrap.querySelectorAll('.nq-side-card').forEach((c) => c.classList.toggle('nq-side-active', +c.dataset.idx === idx));
+        }
+      };
+      if (isMobile) {
+        wrap.style.cssText += ';display:flex;flex-direction:row;overflow-x:scroll;scroll-snap-type:x mandatory;gap:10px;scrollbar-width:none;padding-right:28px;';
+        this.videos.forEach((v, i) => {
+          const card = document.createElement('div'); card.className = 'nq-hero-swipe-card'; card.dataset.idx = i;
+          card.style.cssText = 'height:' + Math.round(window.innerHeight * 0.5) + 'px;flex:0 0 92%;width:92%;position:relative;';
+          const p = document.createElement('img');
+          p.loading = 'lazy'; p.decoding = 'async'; p.setAttribute('data-poster', '1');
+          if (this.vThumb(v)) p.src = this.vThumb(v);
+          card.appendChild(p);
+          card.onclick = () => this.openAt(i);
+          wrap.appendChild(card);
+        });
+        if ('IntersectionObserver' in window) {
+          const io = new IntersectionObserver((entries) => {
+            entries.forEach((e) => {
+              const card = e.target, idx = +card.dataset.idx;
+              let vid = card.querySelector('video');
+              if (e.isIntersecting) {
+                if (!vid) {
+                  vid = document.createElement('video');
+                  vid.muted = true; vid.loop = true; vid.playsInline = true; vid.preload = 'auto';
+                  vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:2;';
+                  card.appendChild(vid);
+                  attachStream(vid, this.vMedia(this.videos[idx]), this.vIsHls(this.videos[idx]), () => {});
+                }
+                vid.play().catch(() => {});
+              } else if (vid) {
+                try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (x) {}
+                vid.remove();
+              }
+            });
+          }, { threshold: 0.6, root: wrap });
+          wrap.querySelectorAll('.nq-hero-swipe-card').forEach((c) => io.observe(c));
+        }
+      } else {
+        const main = document.createElement('div'); main.className = 'nq-hero-main'; main.style.height = cardH + 'px';
+        const hv = document.createElement('video'); hv.className = 'nq-hero-video'; hv.autoplay = true; hv.muted = true; hv.loop = true; hv.playsInline = true;
+        hv.style.cssText = 'width:100%;height:' + cardH + 'px;object-fit:cover;display:block;';
+        main.appendChild(hv); main.onclick = () => this.openAt(heroIndex);
+        const stripOuter = document.createElement('div'); stripOuter.className = 'nq-hero-strip-outer'; stripOuter.style.height = cardH + 'px';
+        const strip = document.createElement('div'); strip.className = 'nq-hero-slide-strip'; strip.style.cssText = 'height:' + cardH + 'px;max-height:' + cardH + 'px;';
+        const sideH = Math.round((cardH - 16) / 3);
+        this.videos.forEach((v, i) => {
+          const card = document.createElement('div'); card.className = 'nq-side-card' + (i === 0 ? ' nq-side-active' : ''); card.dataset.idx = i;
+          card.style.cssText = 'height:' + sideH + 'px;position:relative;';
+          card.innerHTML = '<div class="nq-side-ring"></div>' + (this.vThumb(v) ? '<img src="' + this.vThumb(v) + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;">' : '');
+          const views = document.createElement('div'); views.className = 'nq-views'; views.innerHTML = '&#128065; ' + this.vViews(v); card.appendChild(views);
+          card.addEventListener('click', () => setActive(i));
+          strip.appendChild(card);
+        });
+        stripOuter.appendChild(strip);
+        wrap.appendChild(main); wrap.appendChild(stripOuter);
+        setActive(0);
+      }
+    }
+
+    // Reusable prev/next scroll arrows for the horizontal carousel.
+    attachScrollArrows(track, s) {
+      const mk = (cls, glyph) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'nq-scroll-btn ' + cls; b.innerHTML = glyph; return b; };
+      const prev = mk('nq-scroll-prev', '❮'), next = mk('nq-scroll-next', '❯');
+      track.parentNode.style.position = 'relative';
+      track.parentNode.appendChild(prev); track.parentNode.appendChild(next);
+      const amt = () => (s.cardW + 12);
+      prev.onclick = () => track.scrollBy({ left: -amt(), behavior: 'smooth' });
+      next.onclick = () => track.scrollBy({ left: amt(), behavior: 'smooth' });
     }
 
     setupIntersectionObserver() {
