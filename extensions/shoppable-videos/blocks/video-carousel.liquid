@@ -78,6 +78,14 @@
           <div class="swiper-wrapper" id="nq-swiper-wrapper"></div>
         </div>
 
+        {%- comment -%} Mobile-only hint: tells users to swipe up for the next video {%- endcomment -%}
+        <div class="nq-swipe-hint" id="nq-swipe-hint" aria-hidden="true">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="18 15 12 9 6 15"/>
+          </svg>
+          <span>Swipe up for next</span>
+        </div>
+
         <div class="nq-side-actions">
           <button class="nq-side-btn nq-mute-btn" id="nq-mute-btn" aria-label="Toggle mute">
             <svg id="nq-icon-sound" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display:none">

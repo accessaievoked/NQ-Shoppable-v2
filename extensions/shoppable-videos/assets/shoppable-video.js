@@ -127,6 +127,8 @@
     const arrowNext    = document.getElementById('nq-arrow-next');
     const likeBtn      = document.getElementById('nq-like-btn');
     const shareBtn     = document.getElementById('nq-share-btn');
+    const swipeHint    = document.getElementById('nq-swipe-hint');
+    let   swipeHintTimer = null;
     const swiperWrapper = document.getElementById('nq-swiper-wrapper');
 
     if (!modal || !swiperWrapper) return;
@@ -386,6 +388,26 @@
       if (likeBtn) likeBtn.classList.toggle('nq-liked', likedSet.has(v.id));
     }
 
+    // Mobile-only "swipe up for next" cue — shown on open, auto-hides, and
+    // disappears as soon as the user actually swipes.
+    function showSwipeHint(total) {
+      if (!swipeHint) return;
+      clearTimeout(swipeHintTimer);
+      const isMobile = window.matchMedia('(max-width: 700px)').matches;
+      if (isMobile && total > 1) {
+        swipeHint.classList.add('nq-show');
+        swipeHint.style.opacity = '1';
+        swipeHintTimer = setTimeout(() => { swipeHint.style.opacity = '0'; }, 4500);
+      } else {
+        swipeHint.classList.remove('nq-show');
+      }
+    }
+    function hideSwipeHint() {
+      if (!swipeHint) return;
+      clearTimeout(swipeHintTimer);
+      swipeHint.style.opacity = '0';
+    }
+
     // ── Open / Close ──────────────────────────────────────────────────────
     function openModal(videos, index) {
       modalVideos = videos;
@@ -434,6 +456,7 @@
         swiperInstance.on('slideChangeTransitionStart', () => {
           modalIndex = swiperInstance.activeIndex;
           manageSlides(modalIndex);
+          hideSwipeHint(); // they're swiping now — drop the hint
         });
         // Fire after animation completes — keep counter/product panel in sync
         swiperInstance.on('slideChange', () => {
@@ -445,6 +468,7 @@
 
         updateUI(index);
         manageSlides(index);
+        showSwipeHint(videos.length); // mobile "swipe up for next" cue
       });
     }
 

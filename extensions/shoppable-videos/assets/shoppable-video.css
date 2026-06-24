@@ -878,6 +878,37 @@ body.nq-modal-open #shopify-section-header {
   color: #fff;
   text-shadow: 0 1px 3px rgba(0,0,0,0.5);
 }
+
+/* ─── Mobile "swipe up for next" hint ────────────────────────────── */
+.nq-swipe-hint {
+  display: none; /* shown only on mobile, only when there's a next video */
+  position: absolute;
+  left: 50%;
+  bottom: 110px; /* sits above the product card */
+  transform: translateX(-50%);
+  z-index: 9;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.55);
+  pointer-events: none;
+  white-space: nowrap;
+  transition: opacity 0.4s ease;
+}
+.nq-swipe-hint svg { animation: nq-swipe-bounce 1.4s ease-in-out infinite; }
+
+@keyframes nq-swipe-bounce {
+  0%, 100% { transform: translateY(4px); }
+  50%      { transform: translateY(-4px); }
+}
+
+/* Only on mobile (desktop has the side arrows), and only when toggled on */
+@media (max-width: 700px) {
+  .nq-swipe-hint.nq-show { display: flex; }
+}
 /* Mute button now lives in the side stack (override its old absolute pos) */
 .nq-side-actions .nq-mute-btn {
   position: static;

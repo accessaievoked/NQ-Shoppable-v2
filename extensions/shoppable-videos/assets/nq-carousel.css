@@ -149,7 +149,8 @@
 }
 .nq-scroll-prev { left: 8px; }
 .nq-scroll-next { right: 8px; }
-.nq-carousel-wrap:hover .nq-scroll-btn { opacity: 1; pointer-events: auto; transform: translateY(-50%) scale(1); }
+.nq-carousel-wrap:hover .nq-scroll-btn,
+.nq-shoppable-carousel:hover .nq-scroll-btn { opacity: 1; pointer-events: auto; transform: translateY(-50%) scale(1); }
 .nq-scroll-btn:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.28); transform: translateY(-50%) scale(1.08) !important; }
 .nq-scroll-btn:disabled { opacity: 0 !important; pointer-events: none; }
 
