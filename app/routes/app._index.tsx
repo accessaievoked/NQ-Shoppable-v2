@@ -177,9 +177,9 @@ export default function Index() {
   }, [playingVideo]);
 
   const tabs: { label: string; value: Filter; count: number }[] = [
-    { label: "All",      value: "all",      count: total },
-    { label: "Active",   value: "active",   count: totalActive },
-    { label: "Inactive", value: "inactive", count: totalInactive },
+    { label: "All",              value: "all",      count: total },
+    { label: "On homepage",      value: "active",   count: totalActive },
+    { label: "Not on homepage",  value: "inactive", count: totalInactive },
   ];
 
   function handleSearch(e: React.FormEvent) {
@@ -349,7 +349,7 @@ export default function Index() {
                       ...styles.statusBadge,
                       background: video.active ? "rgba(34,197,94,0.9)" : "rgba(0,0,0,0.55)",
                     }}>
-                      {video.active ? "Active" : "Inactive"}
+                      {video.active ? "On homepage" : "Not on homepage"}
                     </span>
                     {/* Stats badge */}
                     <span style={styles.viewsBadge}>
@@ -416,7 +416,7 @@ export default function Index() {
                       onClick={() => handleToggle(video.id)}
                       disabled={isSubmitting}
                     >
-                      {video.active ? "Deactivate" : "Activate"}
+                      {video.active ? "Remove from homepage" : "Add to homepage"}
                     </button>
 
                     <button

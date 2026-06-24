@@ -1,5 +1,10 @@
 /* ─── NQ Shoppable Videos ─────────────────────────────────────────── */
 
+/* On product pages the block is shown on mobile only — hidden on desktop. */
+@media (min-width: 768px) {
+  .nq-pdp-mobile-only { display: none !important; }
+}
+
 /* Section heading — matched to claura.in (Poppins, pink) */
 .nq-section-title {
   font-family: 'Poppins', sans-serif;

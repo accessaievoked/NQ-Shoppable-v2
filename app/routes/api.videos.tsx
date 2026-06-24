@@ -9,6 +9,14 @@ import db from "../db.server";
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const shop = url.searchParams.get("shop");
+  // Product context — present only on a product page (PDP). When set, we return
+  // videos linked to THIS product regardless of active state (so deactivated
+  // videos still show on their product page); otherwise (home/collection) we
+  // return only active videos. Filtering here keeps deactivated videos out of
+  // the home payload entirely, so they never affect page load.
+  const productId = url.searchParams.get("product_id") || "";
+  const productHandle = (url.searchParams.get("product_handle") || "").toLowerCase();
+  const isPdp = !!(productId || productHandle);
 
   const headers = {
     "Content-Type": "application/json",
@@ -26,7 +34,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   try {
     const videos = await db.video.findMany({
-      where: { shop, active: true },
+      // Home/collection: active only. PDP: all (active + inactive), filtered to
+      // the product below.
+      where: isPdp ? { shop } : { shop, active: true },
       orderBy: { sortOrder: "asc" },
       select: {
         id: true,
@@ -46,8 +56,26 @@ export async function loader({ request }: LoaderFunctionArgs) {
       },
     });
 
+    // On a PDP, keep only videos matching this product — by id OR handle, since
+    // a stored productId can go stale (re-import / other store) while the handle
+    // stays stable. Done in JS to keep the matching logic simple and forgiving.
+    let scoped = videos;
+    if (isPdp) {
+      const digits = (s: string) => String(s || "").replace(/\D/g, "");
+      const handleOf = (u: string) => {
+        const m = String(u || "").match(/\/products\/([^/?#]+)/);
+        return m ? m[1].toLowerCase() : "";
+      };
+      const targetId = digits(productId);
+      scoped = videos.filter((v) => {
+        const idMatch = !!targetId && digits(v.productId) === targetId;
+        const handleMatch = !!productHandle && handleOf(v.productUrl) === productHandle;
+        return idMatch || handleMatch;
+      });
+    }
+
     const origin = new URL(request.url).origin;
-    const videosWithAbsoluteUrls = videos.map((v) => ({
+    const videosWithAbsoluteUrls = scoped.map((v) => ({
       ...v,
       videoUrl: v.videoUrl?.startsWith("/") ? `${origin}${v.videoUrl}` : v.videoUrl,
     }));

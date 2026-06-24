@@ -687,7 +687,16 @@
 
     async fetchVideos() {
       try {
-        const res = await fetch(`/apps/nq-videos/api/videos`, {
+        // On a PDP, pass the product context so the API returns only this
+        // product's videos (active + deactivated). On home it returns active
+        // videos. This keeps deactivated videos out of the home payload.
+        const params = new URLSearchParams();
+        const pid = (this.container.dataset.productId || '').trim();
+        const phandle = (this.container.dataset.productHandle || '').trim();
+        if (pid) params.set('product_id', pid);
+        if (phandle) params.set('product_handle', phandle);
+        const qs = params.toString();
+        const res = await fetch(`/apps/nq-videos/api/videos${qs ? '?' + qs : ''}`, {
           headers: { 'Accept': 'application/json' },
         });
         if (!res.ok) throw new Error('Failed to fetch videos');

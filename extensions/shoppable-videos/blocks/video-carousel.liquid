@@ -1,9 +1,10 @@
+{%- comment -%} On a product page the carousel is shown on mobile only (nq-pdp-mobile-only). {%- endcomment -%}
 {%- if block.settings.title != blank -%}
-  <h2 class="nq-section-title">{{ block.settings.title }}</h2>
+  <h2 class="nq-section-title{% if product %} nq-pdp-mobile-only{% endif %}">{{ block.settings.title }}</h2>
 {%- endif -%}
 
 <div
-  class="nq-shoppable-carousel"
+  class="nq-shoppable-carousel{% if product %} nq-pdp-mobile-only{% endif %}"
   id="nq-carousel-{{ block.id }}"
   data-shop="{{ shop.permanent_domain }}"
   data-block-id="{{ block.id }}"
