@@ -1,0 +1,812 @@
+/* ============================================================
+   NQ Video Carousel — Complete Stylesheet
+   ============================================================ */
+
+.nq-section {
+  position: relative;
+  box-sizing: border-box;
+  padding-bottom: 32px !important;
+  padding-left: 40px !important;
+}
+.nq-tile-type-3d_navigation { overflow: hidden; }
+.nq-heading { margin: 0 0 28px; font-weight: 400; letter-spacing: -0.3px; font-family: Poppins, sans-serif; }
+.nq-empty { padding: 20px; color: #999; font-size: 14px; }
+.nq-loading { display: none; }
+
+/* ============================================================
+   SKELETON LOADING
+   ============================================================ */
+@keyframes nq-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.nq-skeleton {
+  border-radius: 12px;
+  flex-shrink: 0;
+  background: linear-gradient(90deg, #efefef 25%, #e2e2e2 50%, #efefef 75%);
+  background-size: 200% 100%;
+  animation: nq-shimmer 1.2s ease-in-out infinite;
+  pointer-events: none;
+  position: relative;
+  overflow: visible;
+}
+
+/* Skeleton card with text lines below (matches product_below layout) */
+.nq-skeleton-card {
+  border-radius: 12px;
+  margin-bottom: 80px;
+}
+
+.nq-skeleton-text-wrap {
+  position: absolute;
+  bottom: -68px;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 4px 0;
+}
+
+.nq-skeleton-line {
+  border-radius: 6px;
+  background: linear-gradient(90deg, #efefef 25%, #e2e2e2 50%, #efefef 75%);
+  background-size: 200% 100%;
+  animation: nq-shimmer 1.2s ease-in-out infinite;
+}
+
+.nq-skeleton-line-title {
+  height: 13px;
+  width: 90%;
+}
+
+.nq-skeleton-line-price {
+  height: 13px;
+  width: 60%;
+}
+
+/* Also a skeleton heading pill above the carousel */
+.nq-skeleton-heading {
+  height: 32px;
+  width: 200px;
+  margin: 0 auto 28px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #efefef 25%, #e2e2e2 50%, #efefef 75%);
+  background-size: 200% 100%;
+  animation: nq-shimmer 1.2s ease-in-out infinite;
+}
+
+/* Grid skeletons */
+.nq-skeleton-grid {
+  width: 100%;
+  aspect-ratio: 9/16;
+  border-radius: 12px;
+  background: linear-gradient(90deg, #efefef 25%, #e2e2e2 50%, #efefef 75%);
+  background-size: 200% 100%;
+  animation: nq-shimmer 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+.nq-tile-type-grid_theme_border .nq-skeleton-grid { border-radius: 16px; }
+.nq-tile-type-grid_no_border .nq-skeleton-grid { border-radius: 0; }
+
+/* 3D skeleton */
+.nq-skeleton-3d {
+  position: absolute;
+  border-radius: 16px;
+  background: linear-gradient(90deg, #efefef 25%, #e2e2e2 50%, #efefef 75%);
+  background-size: 200% 100%;
+  animation: nq-shimmer 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+/* Stagger shimmer so cards pulse at different times */
+.nq-skeleton:nth-child(2), .nq-skeleton-grid:nth-child(2), .nq-skeleton-3d:nth-child(2) { animation-delay: 0.1s; }
+.nq-skeleton:nth-child(3), .nq-skeleton-grid:nth-child(3), .nq-skeleton-3d:nth-child(3) { animation-delay: 0.2s; }
+.nq-skeleton:nth-child(4), .nq-skeleton-grid:nth-child(4), .nq-skeleton-3d:nth-child(4) { animation-delay: 0.3s; }
+.nq-skeleton:nth-child(5), .nq-skeleton-grid:nth-child(5), .nq-skeleton-3d:nth-child(5) { animation-delay: 0.4s; }
+.nq-skeleton:nth-child(6), .nq-skeleton-grid:nth-child(6), .nq-skeleton-3d:nth-child(6) { animation-delay: 0.5s; }
+.nq-skeleton-line-price { animation-delay: 0.15s; }
+
+/* ============================================================
+   CAROUSEL (horizontal scroll)
+   ============================================================ */
+.nq-carousel-wrap { position: relative; overflow: visible; }
+
+.nq-carousel {
+  display: flex;
+  gap: 15px;
+  overflow-x: auto;
+  overflow-y: visible;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-bottom: 92px;
+  margin-bottom: -92px;
+}
+.nq-carousel::-webkit-scrollbar { display: none; }
+
+/* Scroll arrow buttons */
+.nq-scroll-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%) scale(0.85);
+  z-index: 10;
+  background: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 42px;
+  height: 42px;
+  font-size: 16px;
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease, transform 0.22s ease, box-shadow 0.2s;
+}
+.nq-scroll-prev { left: 8px; }
+.nq-scroll-next { right: 8px; }
+.nq-carousel-wrap:hover .nq-scroll-btn { opacity: 1; pointer-events: auto; transform: translateY(-50%) scale(1); }
+.nq-scroll-btn:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.28); transform: translateY(-50%) scale(1.08) !important; }
+.nq-scroll-btn:disabled { opacity: 0 !important; pointer-events: none; }
+
+/* ============================================================
+   BASE CARD
+   ============================================================ */
+.nq-card {
+  position: relative;
+  flex: 0 0 auto;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  scroll-snap-align: start;
+  background: #111;
+  transition: transform 0.22s ease;
+}
+.nq-card:hover { transform: scale(1.025); }
+
+.nq-video-el { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: inherit; }
+
+.nq-views {
+  position: absolute;
+  top: 10px; left: 10px;
+  background: rgba(0,0,0,0.52);
+  color: #fff;
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 20px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  backdrop-filter: blur(3px);
+}
+
+/* ============================================================
+   TILE 1 & 2 — Transparent Text Overlay
+   ============================================================ */
+.nq-tile-img_transparent_text_overlay_3,
+.nq-tile-img_transparent_text_overlay_2 { border-radius: 14px; }
+
+.nq-ov-transparent {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 12px;
+  background: rgba(0,0,0,0.40);
+  backdrop-filter: blur(2px);
+  border-radius: 0 0 12px 12px;
+}
+.nq-ov-transparent .nq-ov-thumb {
+  width: 44px; height: 44px;
+  object-fit: cover; border-radius: 6px;
+  flex-shrink: 0;
+  border: 1.5px solid rgba(255,255,255,0.35);
+}
+.nq-ov-transparent .nq-ov-title {
+  color: #fff; font-size: 12px; font-weight: 600; line-height: 1.35;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+/* ============================================================
+   TILE 3 — Opaque Text Overlay
+   ============================================================ */
+.nq-tile-img_opaque_text_overlay_3 { border-radius: 14px; overflow: visible !important; }
+.nq-tile-img_opaque_text_overlay_3 .nq-video-el { border-radius: 14px 14px 0 0; }
+.nq-ov-opaque {
+  position: absolute;
+  bottom: -64px; left: 0; right: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px;
+  background: #fff;
+  border-radius: 0 0 12px 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.10);
+  z-index: 4;
+}
+.nq-ov-opaque .nq-ov-thumb {
+  width: 44px; height: 44px;
+  object-fit: cover; border-radius: 6px;
+  flex-shrink: 0; border: 1px solid #eee;
+}
+.nq-ov-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.nq-ov-opaque .nq-ov-title {
+  font-size: 12px; font-weight: 600; color: #111; line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.nq-ov-opaque .nq-ov-price { font-size: 12px; font-weight: 500; color: #333; }
+
+/* ============================================================
+   TILE 4 — Single Tile
+   ============================================================ */
+.nq-tile-single_tile_no_overlay { border-radius: 10px; }
+
+/* ============================================================
+   TILE 5 & 6 — Product Info Below
+   ============================================================ */
+.nq-tile-product_below_3,
+.nq-tile-product_below_2,
+.nq-tile-product_below {
+  border-radius: 12px;
+  overflow: visible !important;
+  margin-bottom: 80px;
+}
+.nq-tile-product_below_3 .nq-video-el,
+.nq-tile-product_below_2 .nq-video-el,
+.nq-tile-product_below .nq-video-el { border-radius: 12px; }
+
+.nq-below-info { padding: 8px 4px 0; }
+.nq-tile-product_below_3 .nq-below-info,
+.nq-tile-product_below_2 .nq-below-info,
+.nq-tile-product_below .nq-below-info { bottom: -78px; left: 0; right: 0; }
+
+.nq-below-title {
+  font-size: 13px; font-weight: 400; color: #111;
+  margin: 0 0 5px; line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.nq-below-price {
+  font-size: 13px; font-weight: 400; color: #EF748B;
+  margin: 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.nq-orig-price { font-size: 14px; font-weight: 500; color: #999; text-decoration: line-through; }
+.nq-disc-badge {
+  font-size: 9px; font-weight: 400;
+  background: #EF748B; color: #fff;
+  padding: 2px 7px; border-radius: 4px;
+}
+
+/* ============================================================
+   TILE 7 — Story Format
+   ============================================================ */
+.nq-tile-story_format {
+  border-radius: 50% !important;
+  box-shadow: 0 0 0 3px #fff, 0 0 0 5.5px #e91e8c;
+  overflow: hidden !important;
+  flex-shrink: 0;
+}
+.nq-tile-story_format .nq-video-el { border-radius: 50%; }
+.nq-tile-story_format:hover { transform: scale(1.07); box-shadow: 0 0 0 3px #fff, 0 0 0 6.5px #e91e8c; }
+
+/* ============================================================
+   TILE 8 — Feed View More
+   ============================================================ */
+.nq-tile-feed_view_more { border-radius: 14px; }
+.nq-view-more-wrap { display: flex; justify-content: center; margin-top: 24px; }
+.nq-view-more-btn {
+  background: #111; color: #fff; border: none;
+  padding: 12px 36px; font-size: 14px; font-weight: 600;
+  letter-spacing: 1px; border-radius: 4px; cursor: pointer;
+  transition: background 0.2s;
+}
+.nq-view-more-btn:hover { background: #333; }
+
+/* ============================================================
+   TILE 9 — Feed On Scroll
+   ============================================================ */
+.nq-tile-type-feed_on_scroll .nq-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.nq-tile-feed_on_scroll {
+  width: 100% !important; height: auto !important;
+  aspect-ratio: 9/16; border-radius: 12px;
+  overflow: visible !important; margin-bottom: 70px;
+}
+.nq-tile-feed_on_scroll .nq-video-el { border-radius: 12px; aspect-ratio: 9/16; height: 100%; }
+.nq-tile-feed_on_scroll .nq-below-info { position: absolute; bottom: -68px; left: 0; right: 0; }
+.nq-scroll-fade { opacity: 0; transform: translateY(20px); transition: opacity 0.5s ease, transform 0.5s ease; }
+.nq-scroll-fade.nq-visible { opacity: 1; transform: translateY(0); }
+
+/* ============================================================
+   TILE 10 — Grid Theme Border
+   ============================================================ */
+.nq-tile-type-grid_theme_border .nq-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.nq-tile-grid_theme_border { width: 100% !important; height: auto !important; aspect-ratio: 9/16; border-radius: 16px; overflow: hidden !important; }
+.nq-tile-grid_theme_border .nq-video-el { border-radius: 14px; aspect-ratio: 9/16; height: 100%; }
+
+/* ============================================================
+   TILE 11 — Grid No Border
+   ============================================================ */
+.nq-tile-type-grid_no_border .nq-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.nq-tile-grid_no_border { width: 100% !important; height: auto !important; aspect-ratio: 9/16; border-radius: 0 !important; overflow: hidden !important; }
+.nq-tile-grid_no_border .nq-video-el { border-radius: 0; aspect-ratio: 9/16; height: 100%; }
+
+/* ============================================================
+   TILE 12 — 3D Navigation
+   ============================================================ */
+.nq-3d-wrap { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 20px 0; overflow: hidden; }
+.nq-3d-track {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  height: 420px; flex: 1; perspective: 1000px; transform-style: preserve-3d;
+}
+.nq-tile-3d_navigation { position: absolute; border-radius: 16px; flex-shrink: 0; transform-origin: center center; }
+.nq-3d-prev, .nq-3d-next {
+  background: #fff; border: none; border-radius: 50%;
+  width: 44px; height: 44px; font-size: 18px; cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; z-index: 20; transition: box-shadow 0.2s;
+}
+.nq-3d-prev:hover, .nq-3d-next:hover { box-shadow: 0 4px 18px rgba(0,0,0,0.24); }
+
+/* ============================================================
+   TILE 13 — Minimal
+   ============================================================ */
+.nq-tile-minimal { border-radius: 12px; }
+
+/* Grid wrapper */
+.nq-grid { width: 100%; }
+
+/* ============================================================
+   POPUP — Fullscreen Video Player
+   ============================================================ */
+.nq-popup {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  align-items: center;
+  justify-content: center;
+}
+.nq-popup.active { display: flex; }
+
+.nq-popup-overlay {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.nq-popup-content {
+  position: relative; z-index: 1;
+  display: flex; align-items: center; gap: 16px;
+}
+
+.nq-popup-video-wrap {
+  position: relative;
+  width: 360px; max-height: 88vh;
+  border-radius: 18px; overflow: hidden;
+  background: #000;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+}
+
+.nq-popup-video { width: 100%; max-height: 88vh; object-fit: cover; display: block; }
+
+.nq-popup-close {
+  position: absolute; top: 12px; right: 12px;
+  background: rgba(0,0,0,0.45); border: none; color: #fff;
+  font-size: 16px; width: 34px; height: 34px; border-radius: 50%;
+  cursor: pointer; z-index: 15;
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(4px); transition: background 0.2s;
+}
+.nq-popup-close:hover { background: rgba(0,0,0,0.7); }
+
+.nq-popup-mute {
+  position: absolute; top: 12px; left: 12px;
+  background: rgba(0,0,0,0.45); border: none; color: #fff;
+  font-size: 16px; width: 34px; height: 34px; border-radius: 50%;
+  cursor: pointer; z-index: 15;
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(4px); transition: background 0.2s;
+}
+.nq-popup-mute:hover { background: rgba(0,0,0,0.7); }
+
+.nq-popup-prev, .nq-popup-next {
+  background: rgba(255,255,255,0.14); border: none; color: #fff;
+  font-size: 22px; width: 48px; height: 48px; border-radius: 50%;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(4px); transition: background 0.2s, transform 0.15s;
+  flex-shrink: 0; z-index: 2;
+}
+.nq-popup-prev:hover, .nq-popup-next:hover { background: rgba(255,255,255,0.28); transform: scale(1.08); }
+
+.nq-popup-product {
+  position: absolute; bottom: 30px; left: 10%; right: 0;
+  z-index: 5; border-radius: 0 0 18px 18px;
+  overflow: hidden; justify-content: center; align-items: center; width: 80%;
+}
+
+.nq-swipe-hint {
+  position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+  background: none; color: #fff; font-size: 12px;
+  padding: 0; border-radius: 0; z-index: 20;
+  white-space: nowrap; opacity: 0; pointer-events: none;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+  display: none;
+}
+/* On mobile popup, always show the hint */
+.nq-popup-mobile .nq-swipe-hint { display: block; opacity: 1; }
+
+/* Mobile fullscreen reel */
+@media (max-width: 768px) {
+  .nq-popup-mobile .nq-popup-overlay { display: none; }
+  .nq-popup-mobile .nq-popup-prev, .nq-popup-mobile .nq-popup-next { display: none; }
+  .nq-popup-mobile .nq-popup-content {
+    width: 100vw; height: 100dvh; max-height: 100dvh;
+    padding: 0; gap: 0; background: #000;
+  }
+  .nq-popup-mobile .nq-popup-video-wrap {
+    width: 100vw; height: 100dvh; max-height: 100dvh;
+    border-radius: 0; box-shadow: none;
+  }
+  .nq-popup-mobile .nq-popup-video { width: 100%; height: 100%; max-height: 100dvh; object-fit: cover; }
+  .nq-popup-mobile .nq-popup-product { border-radius: 0; }
+}
+
+/* Popup product card */
+.nq-popup-product-card {
+  background: #fff;
+  border-radius: 12px 12px 0 0;
+  padding: 10px 12px;
+  display: flex; align-items: center; gap: 10px;
+  border: 1px solid rgba(255,255,255,0.15); border-bottom: none;
+}
+.nq-popup-thumb { height: 80px; object-fit: cover; border-radius: 8px; flex-shrink: 0; border: 1px solid rgba(255,255,255,0.2); }
+.nq-popup-product-info { flex: 1; min-width: 0; }
+.nq-popup-product-title {
+  font-size: 13px; font-weight: 600; color: #000; margin: 0 0 4px; line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.nq-popup-product-price { font-size: 14px; font-weight: 700; color: #000; margin: 0; display: flex; align-items: center; gap: 6px; }
+.nq-popup-orig-price { font-size: 12px; font-weight: 400; color: #999; text-decoration: line-through; }
+.nq-popup-shop-btn {
+  display: block; width: 100%; box-sizing: border-box;
+  padding: 13px 0; text-align: center;
+  color: #fff !important; font-size: 13px; font-weight: 700; letter-spacing: 1.5px;
+  text-decoration: none; border-radius: 0 0 16px 16px;
+  transition: opacity 0.2s; background: #333333d4 !important;
+}
+.nq-popup-shop-btn:hover { opacity: 0.88; }
+
+/* ── Loading spinner (shown while switching videos) ── */
+@keyframes nq-spin {
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+.nq-popup-spinner {
+  display: none;
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 44px; height: 44px;
+  border: 4px solid rgba(255,255,255,0.2);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: nq-spin 0.7s linear infinite;
+  z-index: 20;
+  pointer-events: none;
+}
+.nq-popup-spinner.nq-spinning { display: block; }
+
+/* ============================================================
+   SCROLL DOWN HINT — mobile carousel
+   ============================================================ */
+@keyframes nq-bounce-down {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50%       { transform: translateX(-50%) translateY(6px); }
+}
+@keyframes nq-hint-fade-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.nq-scroll-down-hint {
+  display: none; /* shown by JS on mobile only */
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  animation: nq-hint-fade-in 0.4s ease forwards, nq-bounce-down 1.4s ease-in-out 0.6s infinite;
+}
+.nq-scroll-down-hint.nq-hint-visible { display: flex; }
+.nq-scroll-down-hint.nq-hint-hiding {
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+.nq-scroll-down-hint-text {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.9);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  white-space: nowrap;
+}
+.nq-scroll-down-hint-arrow {
+  width: 22px;
+  height: 22px;
+  border: 2px solid rgba(255,255,255,0.85);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: rgba(255,255,255,0.9);
+  background: rgba(0,0,0,0.25);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+/* Like / Share */
+.nq-popup-actions {
+  position: absolute; right: 12px; bottom: 220px;
+  z-index: 20; display: flex; flex-direction: column; align-items: center; gap: 18px;
+}
+.nq-action-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: none; border: none; cursor: pointer; padding: 0; color: #fff;
+  -webkit-tap-highlight-color: transparent;
+}
+.nq-action-icon {
+  width: 44px; height: 44px;
+  background: rgba(0,0,0,0.45); backdrop-filter: blur(4px);
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 20px; transition: background 0.2s, transform 0.15s; line-height: 1;
+}
+.nq-action-btn:hover .nq-action-icon, .nq-action-btn:active .nq-action-icon {
+  background: rgba(0,0,0,0.7); transform: scale(1.12);
+}
+.nq-action-btn.nq-liked .nq-action-icon { background: rgba(220,30,60,0.75); font-size: 0; }
+.nq-action-btn.nq-liked .nq-action-icon::before { content: "❤️"; font-size: 20px; }
+.nq-action-label { font-size: 11px; font-weight: 600; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,0.6); letter-spacing: 0.3px; }
+
+/* ============================================================
+   MOBILE
+   ============================================================ */
+@media (max-width: 768px) {
+  .nq-section {
+    padding-bottom: 35px !important;
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }
+  .nq-heading { margin: 0 0 8px; }
+  .nq-carousel-wrap { overflow: visible; }
+
+  .nq-tile-img_transparent_text_overlay_3,
+  .nq-tile-img_opaque_text_overlay_3,
+  .nq-tile-product_below_3 {
+    width: calc(33vw - 10px) !important;
+    height: calc((33vw - 10px) * 1.72) !important;
+  }
+  .nq-tile-img_transparent_text_overlay_2,
+  .nq-tile-product_below_2 {
+    width: calc(46vw - 14px) !important;
+    height: calc((50vw - 14px) * 1.72) !important;
+  }
+  .nq-tile-product_below_3 .nq-below-info,
+  .nq-tile-product_below_2 .nq-below-info,
+  .nq-tile-product_below .nq-below-info { bottom: -80px; left: 0; right: 0; padding: 6px 2px 0; }
+  .nq-tile-product_below_3, .nq-tile-product_below_2, .nq-tile-product_below { margin-bottom: 90px; }
+  .nq-below-title { font-size: 13px; }
+  .nq-below-price { font-size: 13px; }
+  .nq-tile-story_format { width: 82px !important; height: 82px !important; }
+  .nq-tile-type-grid_theme_border .nq-grid, .nq-tile-type-grid_no_border .nq-grid { grid-template-columns: repeat(2, 1fr); }
+  .nq-scroll-btn, .nq-scroll-prev, .nq-scroll-next { display: none !important; }
+
+  /* Mobile skeleton cards match mobile card sizes */
+  .nq-skeleton-card { margin-bottom: 90px; }
+  .nq-skeleton-text-wrap { bottom: -78px; }
+
+  .nq-popup-actions { bottom: 200px; right: 10px; gap: 16px; }
+  .nq-action-icon { width: 40px; height: 40px; font-size: 18px; }
+  .nq-action-btn.nq-liked .nq-action-icon::before { font-size: 18px; }
+}
+
+
+
+  {% if show_device == 'desktop_only' %}
+    #nq-section-{{ block.id }} { display: block; }
+    @media (max-width: 767px) { #nq-section-{{ block.id }} { display: none !important; } }
+  {% elsif show_device == 'mobile_only' %}
+    #nq-section-{{ block.id }} { display: none; }
+    @media (max-width: 767px) { #nq-section-{{ block.id }} { display: block !important; } }
+  {% else %}
+    #nq-section-{{ block.id }} { display: block; }
+  {% endif %}
+
+  /* ════════════════════════════
+     HERO + SLIDE LAYOUT STYLES
+  ════════════════════════════ */
+
+  /* Wrapper — desktop: flex row */
+  .nq-hero-slide-wrap {
+    display: flex;
+    flex-direction: row;
+    gap: 12px;
+    width: 100%;
+    position: relative;
+    align-items: flex-start;
+    overflow: visible;
+  }
+
+  /* ── Hero main card (desktop) ── */
+  .nq-hero-main {
+    flex: 0 0 auto;
+    width: clamp(240px, 55%, 420px);
+    border-radius: 18px;
+    overflow: hidden;
+    cursor: pointer;
+    background: #f0f0f0;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+    position: relative;
+    transition: box-shadow 0.2s;
+  }
+  .nq-hero-main:hover { box-shadow: 0 14px 44px rgba(0,0,0,0.32); }
+  .nq-hero-main video { width: 100%; display: block; object-fit: cover; }
+
+  /* Play icon — hidden (autoplay) */
+  .nq-hero-play-icon { display: none !important; }
+
+  /* Product badge */
+  .nq-hero-product-bar {
+    position: absolute;
+    top: 12px; right: 12px;
+    z-index: 4;
+    background: rgba(255,255,255,0.94);
+    border-radius: 10px;
+    padding: 6px 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 160px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.14);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .nq-hero-product-bar:hover { background: #fff; }
+  .nq-hero-product-bar img {
+    width: 32px; height: 32px;
+    object-fit: cover; border-radius: 5px; flex-shrink: 0;
+  }
+  .nq-hero-product-title {
+    font-size: 11px; font-weight: 600; color: #222;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90px;
+  }
+  .nq-hero-product-price { font-size: 11px; color: #555; white-space: nowrap; }
+
+  /* ── Side strip (desktop) ── */
+  .nq-hero-strip-outer {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    gap: 6px;
+    overflow: hidden;
+    align-items: stretch;
+  }
+  .nq-hero-slide-strip {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+    scrollbar-width: none;
+  }
+  .nq-hero-slide-strip::-webkit-scrollbar { display: none; }
+
+  /* Side card */
+  .nq-side-card {
+    flex: 0 0 auto;
+    border-radius: 12px;
+    overflow: hidden;
+    cursor: pointer;
+    background: #111;
+    position: relative;
+    transition: transform 0.18s, box-shadow 0.18s;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+  }
+  .nq-side-card:hover { transform: scale(1.03); box-shadow: 0 6px 22px rgba(0,0,0,0.22); }
+  .nq-side-card video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .nq-side-ring {
+    position: absolute; inset: 0; border-radius: 12px;
+    border: 3px solid transparent; pointer-events: none; z-index: 3;
+    transition: border-color 0.2s;
+  }
+  .nq-side-card.nq-side-active .nq-side-ring { border-color: #e02; }
+  .nq-side-card .nq-views {
+    position: absolute; bottom: 6px; left: 8px;
+    font-size: 11px; color: #fff;
+    background: rgba(0,0,0,0.45); padding: 2px 6px; border-radius: 20px; z-index: 2;
+  }
+
+  /* Strip nav */
+  .nq-strip-nav {
+    display: flex; flex-direction: column;
+    justify-content: center; gap: 8px; flex-shrink: 0;
+  }
+  .nq-strip-nav button {
+    width: 28px; height: 28px; border-radius: 50%; border: none;
+    background: #ebebeb; cursor: pointer; font-size: 12px;
+    display: flex; align-items: center; justify-content: center;
+    color: #333; transition: background 0.15s; padding: 0;
+  }
+  .nq-strip-nav button:hover { background: #d5d5d5; }
+
+  /* Shimmer keyframe */
+  @keyframes nqShimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* ── Mobile swipe cards ── */
+  .nq-hero-swipe-card {
+    flex: 0 0 92%;
+    width: 92%;
+    min-width: 0;
+    border-radius: 16px;
+    overflow: hidden;
+    position: relative;
+    background: #111;
+    scroll-snap-align: start;
+    cursor: pointer;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.18);
+    flex-shrink: 0;
+    transition: transform 0.3s ease, opacity 0.3s ease, filter 0.3s ease;
+  }
+  .nq-hero-swipe-card img,
+  .nq-hero-swipe-card video {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+  }
+  .nq-hero-swipe-card.nq-swipe-inactive {
+    opacity: 0.45;
+    transform: scale(0.94);
+    filter: brightness(0.6);
+  }
+
+  /* Dot indicators — always hidden (removed feature) */
+  .nq-hero-dots { display: none !important; }
+
+  /* ── MOBILE OVERRIDES — scoped to hero_slide only ── */
+  @media (max-width: 767px) {
+    .nq-tile-type-hero_slide .nq-hero-slide-wrap {
+      flex-direction: row !important;
+      overflow-x: scroll !important;
+      overflow-y: hidden !important;
+      scroll-snap-type: x mandatory !important;
+      -webkit-overflow-scrolling: touch !important;
+      gap: 10px !important;
+      scrollbar-width: none !important;
+      width: 100% !important;
+      align-items: stretch !important;
+      padding-right: 28px !important;
+    }
+    .nq-tile-type-hero_slide .nq-hero-slide-wrap::-webkit-scrollbar { display: none; }
+    .nq-tile-type-hero_slide .nq-hero-main {
+      flex: 0 0 92% !important;
+      width: 92% !important;
+      height: 50vh !important;
+      scroll-snap-align: start !important;
+      border-radius: 16px !important;
+    }
+    .nq-tile-type-hero_slide .nq-hero-strip-outer { display: none !important; }
+    .nq-tile-type-hero_slide .nq-strip-nav        { display: none !important; }
+  }
