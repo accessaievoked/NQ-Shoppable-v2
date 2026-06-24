@@ -564,10 +564,43 @@
       loadHls();
       initModal();
       await this.fetchVideos();
+      // On a product page, show only videos linked to that product.
+      if (!this.applyProductFilter()) return;
       this.render();
       this.addCarouselArrows();
       this.preloadFirstCard();
       this.setupIntersectionObserver();
+    }
+
+    // On a PDP the block carries data-product-id (the storefront product id).
+    // Keep only videos whose stored productId matches it. The picker stores a
+    // gid ("gid://shopify/Product/123…") while the PDP gives a number, so we
+    // compare just the digits. Returns false (and hides the block) when this
+    // product has no videos, so empty carousels never show on product pages.
+    applyProductFilter() {
+      const pid = (this.container.dataset.productId || '').trim();
+      const phandle = (this.container.dataset.productHandle || '').trim().toLowerCase();
+      if (!pid && !phandle) return true; // not a product page → show all videos
+      const digits = (s) => String(s || '').replace(/\D/g, '');
+      const handleOf = (u) => { const m = String(u || '').match(/\/products\/([^/?#]+)/); return m ? m[1].toLowerCase() : ''; };
+      const targetId = digits(pid);
+      // Match by id OR handle. Stored productId can go stale when products are
+      // re-imported/re-created (new Shopify id, same handle) or linked from
+      // another store, so the handle is the more reliable key.
+      this.videos = this.videos.filter((v) => {
+        const idMatch = targetId && digits(v.productId) === targetId;
+        const handleMatch = phandle && handleOf(v.productUrl) === phandle;
+        return idMatch || handleMatch;
+      });
+      if (this.videos.length === 0) {
+        this.container.style.display = 'none';
+        const prev = this.container.previousElementSibling;
+        if (prev && prev.classList && prev.classList.contains('nq-section-title')) {
+          prev.style.display = 'none';
+        }
+        return false;
+      }
+      return true;
     }
 
     // Left/right buttons to scroll the carousel without opening the modal.

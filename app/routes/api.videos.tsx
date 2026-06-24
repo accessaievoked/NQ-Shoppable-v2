@@ -31,6 +31,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       select: {
         id: true,
         title: true,
+        productId: true,
         videoUrl: true,
         streamUrl: true,
         thumbnailUrl: true,
