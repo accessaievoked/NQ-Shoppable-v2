@@ -44,6 +44,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         productId: true,
         videoUrl: true,
         streamUrl: true,
+        previewUrl: true,
         thumbnailUrl: true,
         productTitle: true,
         productUrl: true,

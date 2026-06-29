@@ -64,12 +64,43 @@ function compressToMp4(inputPath: string, outPath: string): Promise<void> {
       .outputOptions([
         "-vf", "scale='min(720,iw)':-2", // cap width at 720, keep aspect, even height
         "-c:v", "libx264",
-        "-profile:v", "main",
-        "-preset", "veryfast",
-        "-crf", "30",
+        "-profile:v", "high",     // better compression than main; universally supported
+        "-preset", "slow",         // SAME quality (crf unchanged), smaller file; slower encode
+        "-crf", "30",              // quality knob — unchanged, so visual quality is identical
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "96k",
+        "-movflags", "+faststart",
+      ])
+      .output(outPath)
+      .on("end", () => resolve())
+      .on("error", (err) => reject(err))
+      .run();
+  });
+}
+
+/**
+ * Builds the tiny CARD PREVIEW clip - a few seconds, small, SILENT - the same
+ * thing shoppable apps (Whatmore/Que) load on each card. This is NOT the reel:
+ * it is a separate ~200-400 KB file so the carousel stays light. The full reel
+ * still plays in the modal on click.
+ *  - "-t 3"     first 3 seconds only
+ *  - "-an"      drop audio (cards are muted) - big size saving
+ *  - 480px cap  card is small, so reel resolution is wasted here
+ *  - crf 32     a touch more compression than the reel (card is tiny on screen)
+ */
+function makeCardClip(inputPath: string, outPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .outputOptions([
+        "-t", "3",
+        "-an",
+        "-vf", "scale='min(480,iw)':-2",
+        "-c:v", "libx264",
+        "-profile:v", "main",
+        "-preset", "slow",
+        "-crf", "32",
+        "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
       ])
       .output(outPath)
@@ -96,7 +127,7 @@ function compressToMp4(inputPath: string, outPath: string): Promise<void> {
 export async function processVideo(
   mp4Url: string,
   baseKey: string
-): Promise<{ compressedUrl: string; streamUrl: string | null; thumbnailUrl: string }> {
+): Promise<{ compressedUrl: string; streamUrl: string | null; thumbnailUrl: string; previewUrl: string | null }> {
   const tmpDir         = await fs.mkdtemp(path.join(os.tmpdir(), "nq-video-"));
   const inputPath      = path.join(tmpDir, "input.mp4");
   const thumbPath      = path.join(tmpDir, "thumbnail.webp");
@@ -136,12 +167,34 @@ export async function processVideo(
       CacheControl: "public, max-age=31536000, immutable",
     }));
 
+    // 5. Build & upload the tiny card-preview clip. Best-effort: a failure here
+    //    must NOT lose the thumbnail/reel above. The storefront falls back to the
+    //    reel when previews/{key}.mp4 is missing, so old videos keep working.
+    let previewUrl: string | null = null;
+    try {
+      const clipPath   = path.join(tmpDir, "preview.mp4");
+      await makeCardClip(inputPath, clipPath);
+      const clipBuffer = await fs.readFile(clipPath);
+      const previewKey = `previews/${baseKey}.mp4`;
+      await s3.send(new PutObjectCommand({
+        Bucket: R2_BUCKET_NAME,
+        Key: previewKey,
+        Body: clipBuffer,
+        ContentType: "video/mp4",
+        CacheControl: "public, max-age=31536000, immutable",
+      }));
+      previewUrl = `${R2_PUBLIC_URL}/${previewKey}`;
+      console.log(`[Video] Card clip: ${previewUrl} (${Math.round(clipBuffer.length / 1024)} KB)`);
+    } catch (clipErr) {
+      console.warn(`[Video] Card clip failed (storefront will use the reel):`, clipErr);
+    }
+
     const compressedUrl = `${R2_PUBLIC_URL}/${mp4Key}`;
     const thumbnailUrl  = `${R2_PUBLIC_URL}/${thumbKey}`;
     const sizeKB        = Math.round(mp4Buffer.length / 1024);
     console.log(`[Video] Done — mp4: ${compressedUrl} (${sizeKB} KB) | thumb: ${thumbnailUrl}`);
 
-    return { compressedUrl, streamUrl: null, thumbnailUrl };
+    return { compressedUrl, streamUrl: null, thumbnailUrl, previewUrl };
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true });
   }

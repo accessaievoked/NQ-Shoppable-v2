@@ -181,6 +181,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         data: {
           videoUrl: processed.compressedUrl,
           streamUrl: processed.streamUrl,
+          previewUrl: processed.previewUrl,
           thumbnailUrl: processed.thumbnailUrl,
         },
       });

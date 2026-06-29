@@ -21,6 +21,7 @@ model Video {
   // Storage
   videoUrl        String   // Original MP4 URL in R2
   streamUrl       String?  // HLS .m3u8 playlist URL (null until converted)
+  previewUrl      String?  // Tiny card-preview clip (previews/{key}.mp4); null = card uses full video
   thumbnailUrl    String   @default("")
   duration        Int?     // seconds
   // Product link

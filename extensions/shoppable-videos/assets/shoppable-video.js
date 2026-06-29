@@ -746,6 +746,10 @@
     // Field accessors so the layout builders read V2's native video shape.
     vMedia(v)   { return v.streamUrl || v.videoUrl; }
     vIsHls(v)   { return !!v.streamUrl; }
+    // Card preview: tiny clip when present, else the full video (old videos).
+    // Previews are plain MP4, so they're never HLS.
+    vPreview(v)      { return v.previewUrl || this.vMedia(v); }
+    vPreviewIsHls(v) { return v.previewUrl ? false : this.vIsHls(v); }
     vThumb(v)   { return v.thumbnailUrl || ''; }
     vTitle(v)   { return v.productTitle || v.title || ''; }
     vImage(v)   { return v.productImageUrl || ''; }
@@ -778,9 +782,11 @@
     // Each card shows a lazy <img>; a real <video> is created only while the card
     // is in view and fully destroyed when it scrolls away, so only the handful on
     // screen are ever live (this is what keeps mobile from running out of memory).
-    observeCardVideo(card, src, isHls, s) {
+    observeCardVideo(card, src, isHls, s, fallbackSrc, fallbackIsHls) {
       if (!src || !s.autoplay || !('IntersectionObserver' in window)) return;
       let vid = null;
+      let curSrc = src, curIsHls = isHls;
+      const canFallback = () => fallbackSrc && fallbackSrc !== curSrc;
       const io = new IntersectionObserver((entries) => {
         entries.forEach((e) => {
           if (e.isIntersecting) {
@@ -791,7 +797,21 @@
               vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;';
               const firstImg = card.querySelector('img');
               card.insertBefore(vid, firstImg ? firstImg.nextSibling : card.firstChild);
-              const hls = attachStream(vid, src, isHls, () => {});
+              // Preview clip missing (e.g. 404 before backfill) → fall back to the
+              // full video so the card still shows motion. curSrc persists the
+              // switch across re-entries so we don't keep retrying the dead clip.
+              vid.addEventListener('error', (ev) => {
+                const el = ev.currentTarget;
+                if (!el || !el.isConnected || !canFallback()) return;
+                curSrc = fallbackSrc; curIsHls = fallbackIsHls;
+                const old = cardHlsMap.get(el);
+                if (old) { try { old.destroy(); } catch (x) {} cardHlsMap.delete(el); }
+                try { el.removeAttribute('src'); } catch (x) {}
+                const h2 = attachStream(el, curSrc, curIsHls, () => {});
+                if (h2) cardHlsMap.set(el, h2);
+                el.play().catch(() => {});
+              });
+              const hls = attachStream(vid, curSrc, curIsHls, () => {});
               if (hls) cardHlsMap.set(vid, hls);
             }
             vid.play().catch(() => {});
@@ -810,7 +830,12 @@
     buildCard(v, i, s) {
       const card = document.createElement('div');
       card.className = 'nq-card nq-tile-' + s.tile;
-      const thumb = this.vThumb(v), src = this.vMedia(v), isHls = this.vIsHls(v);
+      const thumb = this.vThumb(v);
+      // Card plays the tiny preview clip; full video stays for the modal. When a
+      // preview exists, the full video is passed as the on-error fallback.
+      const src = this.vPreview(v), isHls = this.vPreviewIsHls(v);
+      const fallbackSrc = v.previewUrl ? this.vMedia(v) : '';
+      const fallbackIsHls = this.vIsHls(v);
       const img = document.createElement('img');
       img.className = 'nq-video-el';
       img.loading = 'lazy'; img.decoding = 'async';
@@ -818,7 +843,7 @@
       if (thumb) img.src = thumb;
       card.appendChild(img);
       card.onclick = () => this.openAt(i);
-      this.observeCardVideo(card, src, isHls, s);
+      this.observeCardVideo(card, src, isHls, s, fallbackSrc, fallbackIsHls);
       if (s.showViews) {
         const views = document.createElement('div');
         views.className = 'nq-views';
@@ -953,7 +978,7 @@
         heroIndex = idx;
         if (!isMobile) {
           const hv = wrap.querySelector('.nq-hero-video');
-          if (hv) { hv.src = this.vMedia(this.videos[idx]); hv.load(); hv.play().catch(() => {}); }
+          if (hv) { hv.src = this.vPreview(this.videos[idx]); hv.load(); hv.play().catch(() => {}); }
           wrap.querySelectorAll('.nq-side-card').forEach((c) => c.classList.toggle('nq-side-active', +c.dataset.idx === idx));
         }
       };
@@ -980,7 +1005,7 @@
                   vid.muted = true; vid.loop = true; vid.playsInline = true; vid.preload = 'auto';
                   vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:2;';
                   card.appendChild(vid);
-                  attachStream(vid, this.vMedia(this.videos[idx]), this.vIsHls(this.videos[idx]), () => {});
+                  attachStream(vid, this.vPreview(this.videos[idx]), this.vPreviewIsHls(this.videos[idx]), () => {});
                 }
                 vid.play().catch(() => {});
               } else if (vid) {
