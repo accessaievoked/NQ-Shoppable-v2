@@ -154,6 +154,52 @@
 .nq-scroll-btn:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.28); transform: translateY(-50%) scale(1.08) !important; }
 .nq-scroll-btn:disabled { opacity: 0 !important; pointer-events: none; }
 
+/* Featured caption below carousel — mobile only */
+.nq-feature-caption { display: none; }
+@media (max-width: 767px) {
+  .nq-feature-caption {
+    display: block;
+    margin: 16px 4px 0;
+    font-family: 'Poppins', sans-serif;
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.55;
+    color: #555;
+  }
+}
+.nq-feature-link { color: #ef748b; font-weight: 500; text-decoration: none; }
+.nq-feature-link:hover { text-decoration: underline; }
+
+/* Floating top-right product pill (minimal tile) */
+.nq-card .nq-pill {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 72%;
+  padding: 5px 10px 5px 5px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+  text-decoration: none;
+  font-family: 'Poppins', sans-serif;
+}
+.nq-pill-thumb {
+  width: 34px; height: 34px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+.nq-pill-info { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.nq-pill-title {
+  font-size: 12px; font-weight: 500; color: #111;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.nq-pill-price { font-size: 12px; font-weight: 400; color: #777; }
+
 /* ============================================================
    BASE CARD
    ============================================================ */

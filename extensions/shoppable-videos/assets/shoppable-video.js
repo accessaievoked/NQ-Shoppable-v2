@@ -875,7 +875,20 @@
         case 'grid_theme_border': card.style.border = '3px solid ' + s.shopBtn; break;
         case 'grid_no_border': card.style.borderRadius = '0'; break;
         case '3d_navigation': card.style.cssText += 'width:' + cardW + 'px;height:' + cardH + 'px;'; ovTransparent(); break;
-        case 'minimal':
+        case 'minimal': {
+          card.style.cssText += 'width:' + cardW + 'px;height:' + cardH + 'px;';
+          const url = v.productUrl || '#';
+          const pill = document.createElement('a');
+          pill.className = 'nq-pill';
+          pill.href = url;
+          if (url !== '#') { pill.target = '_blank'; pill.rel = 'noopener'; }
+          pill.innerHTML = (img ? '<img class="nq-pill-thumb" src="' + img + '" alt="">' : '') +
+            '<div class="nq-pill-info"><span class="nq-pill-title">' + title + '</span>' +
+            (price ? '<span class="nq-pill-price">' + price + '</span>' : '') + '</div>';
+          pill.addEventListener('click', (e) => e.stopPropagation());
+          card.appendChild(pill);
+          break;
+        }
         default: card.style.cssText += 'width:' + cardW + 'px;height:' + cardH + 'px;'; break;
       }
     }

@@ -50,6 +50,12 @@
       {% endfor %}
     </div>
   </div>
+
+  {%- if block.settings.feature_caption != blank -%}
+    <p class="nq-feature-caption">
+      {{ block.settings.feature_caption }}{% if block.settings.instagram_handle != blank %} <a class="nq-feature-link" href="{{ block.settings.instagram_url }}" target="_blank" rel="noopener nofollow">{{ block.settings.instagram_handle }}</a>{% endif %} {{ block.settings.feature_caption_suffix }}
+    </p>
+  {%- endif -%}
 </div>
 
 {%- comment -%} Fullscreen modal — V2 working player, shared across carousels {%- endcomment -%}
@@ -197,7 +203,12 @@
     },
     { "type": "color",    "id": "shop_btn_color", "label": "Shop Now Button Color", "default": "#000000" },
     { "type": "checkbox", "id": "autoplay",       "label": "Autoplay on hover",     "default": true },
-    { "type": "checkbox", "id": "show_views",     "label": "Show view count",       "default": true }
+    { "type": "checkbox", "id": "show_views",     "label": "Show view count",       "default": true },
+    { "type": "header", "content": "Featured Caption (mobile)" },
+    { "type": "text", "id": "feature_caption", "label": "Caption text", "default": "Want to be featured here? Send us your Claura video or tag" },
+    { "type": "text", "id": "instagram_handle", "label": "Instagram handle (clickable)", "default": "@claura.in" },
+    { "type": "text", "id": "instagram_url", "label": "Instagram URL", "default": "https://www.instagram.com/claura.in" },
+    { "type": "text", "id": "feature_caption_suffix", "label": "Caption text after handle", "default": "on Instagram" }
   ]
 }
 {% endschema %}
