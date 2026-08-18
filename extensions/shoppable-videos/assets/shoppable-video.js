@@ -778,51 +778,87 @@
       return this.renderCarousel(track, s);
     }
 
-    // ── Windowed inline video — memory-safe for large catalogs ─────────
-    // Each card shows a lazy <img>; a real <video> is created only while the card
-    // is in view and fully destroyed when it scrolls away, so only the handful on
-    // screen are ever live (this is what keeps mobile from running out of memory).
+    // ── Inline card video — persistent element, plays when in view ─────
+    // Rule: every card the user is actually looking at plays; cards that aren't
+    // in view pause and release their source. No fixed cap and no look-ahead
+    // (rootMargin 0), so the exact set of visible cards plays — all of them, on
+    // desktop and mobile alike — and nothing offscreen competes for the
+    // connection. The <video> is created ONCE and kept (no destroy/recreate
+    // churn that re-requested + canceled the same clip on every scroll pass),
+    // and uses the thumbnail as its poster so a card never flashes black.
     observeCardVideo(card, src, isHls, s, fallbackSrc, fallbackIsHls) {
       if (!src || !s.autoplay || !('IntersectionObserver' in window)) return;
-      let vid = null;
+      let vid = null;          // persistent <video>, created on first load
+      let loaded = false;      // currently holds a live source
       let curSrc = src, curIsHls = isHls;
       const canFallback = () => fallbackSrc && fallbackSrc !== curSrc;
+      // Retry play() when the clip becomes ready — on mobile the first attempt
+      // often fires before any data has loaded and is silently rejected.
+      const tryPlay = () => { if (!loaded || !vid) return; const p = vid.play(); if (p && p.catch) p.catch(() => {}); };
+
+      const ensureEl = () => {
+        if (vid) return;
+        vid = document.createElement('video');
+        vid.className = 'nq-video-el nq-hover-video';
+        vid.muted = true; vid.loop = true; vid.playsInline = true; vid.preload = 'auto';
+        // iOS/Android autoplay an inline muted video only when these are present
+        // as ATTRIBUTES — JS properties alone aren't enough on iOS Safari.
+        vid.setAttribute('muted', '');
+        vid.setAttribute('playsinline', '');
+        vid.setAttribute('webkit-playsinline', '');
+        vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;';
+        // First play() can fire before data is ready on mobile — retry when ready.
+        vid.addEventListener('loadeddata', tryPlay);
+        vid.addEventListener('canplay', tryPlay);
+        const firstImg = card.querySelector('img');
+        // Poster = thumbnail, so the card shows the thumb before the clip has a
+        // frame and again after its source is released on scroll-away.
+        if (firstImg && firstImg.src) vid.poster = firstImg.src;
+        card.insertBefore(vid, firstImg ? firstImg.nextSibling : card.firstChild);
+        // Preview clip missing (e.g. 404 before backfill) → fall back to the full
+        // video. curSrc persists the switch so we don't keep retrying a dead clip.
+        vid.addEventListener('error', (ev) => {
+          const el = ev.currentTarget;
+          if (!el || !el.isConnected || !canFallback()) return;
+          curSrc = fallbackSrc; curIsHls = fallbackIsHls;
+          const old = cardHlsMap.get(el);
+          if (old) { try { old.destroy(); } catch (x) {} cardHlsMap.delete(el); }
+          try { el.removeAttribute('src'); } catch (x) {}
+          const h2 = attachStream(el, curSrc, curIsHls, () => {});
+          if (h2) cardHlsMap.set(el, h2);
+          el.play().catch(() => {});
+        });
+      };
+
+      const load = () => {          // card is in view: attach source + play
+        if (loaded) return;
+        loaded = true;
+        ensureEl();
+        const hls = attachStream(vid, curSrc, curIsHls, () => {});
+        if (hls) cardHlsMap.set(vid, hls);
+        tryPlay();
+      };
+
+      const unload = () => {        // scrolled away: pause + free the source
+        if (!loaded) return;
+        loaded = false;
+        if (vid) {
+          const hls = cardHlsMap.get(vid);
+          if (hls) { try { hls.destroy(); } catch (x) {} cardHlsMap.delete(vid); }
+          try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (x) {}
+        }
+      };
+
       const io = new IntersectionObserver((entries) => {
         entries.forEach((e) => {
           if (e.isIntersecting) {
-            if (!vid) {
-              vid = document.createElement('video');
-              vid.className = 'nq-video-el nq-hover-video';
-              vid.muted = true; vid.loop = true; vid.playsInline = true; vid.preload = 'auto';
-              vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;';
-              const firstImg = card.querySelector('img');
-              card.insertBefore(vid, firstImg ? firstImg.nextSibling : card.firstChild);
-              // Preview clip missing (e.g. 404 before backfill) → fall back to the
-              // full video so the card still shows motion. curSrc persists the
-              // switch across re-entries so we don't keep retrying the dead clip.
-              vid.addEventListener('error', (ev) => {
-                const el = ev.currentTarget;
-                if (!el || !el.isConnected || !canFallback()) return;
-                curSrc = fallbackSrc; curIsHls = fallbackIsHls;
-                const old = cardHlsMap.get(el);
-                if (old) { try { old.destroy(); } catch (x) {} cardHlsMap.delete(el); }
-                try { el.removeAttribute('src'); } catch (x) {}
-                const h2 = attachStream(el, curSrc, curIsHls, () => {});
-                if (h2) cardHlsMap.set(el, h2);
-                el.play().catch(() => {});
-              });
-              const hls = attachStream(vid, curSrc, curIsHls, () => {});
-              if (hls) cardHlsMap.set(vid, hls);
-            }
-            vid.play().catch(() => {});
-          } else if (vid) {
-            const hls = cardHlsMap.get(vid);
-            if (hls) { try { hls.destroy(); } catch (x) {} cardHlsMap.delete(vid); }
-            try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (x) {}
-            vid.remove(); vid = null;
+            if (!loaded) load();
+            else if (vid && vid.paused) tryPlay();
+          } else {
+            unload();
           }
         });
-      }, { threshold: 0.4, rootMargin: '200px' });
+      }, { threshold: 0.4, rootMargin: '0px' });
       io.observe(card);
     }
 
