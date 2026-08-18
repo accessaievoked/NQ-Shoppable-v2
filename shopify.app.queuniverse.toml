@@ -1,0 +1,38 @@
+# Shopify app config for the Queuniverse deployment.
+# Switch to it with:  shopify app config use queuniverse
+# Then deploy the extension + config with:  shopify app deploy
+#
+# client_id is the Client ID of the "NQ-Shoppable-Queuniverse" app created in the
+# Shopify Dev Dashboard. The same App URL / redirect URL / app proxy values must
+# be set on the Dev Dashboard version so this file and the dashboard agree.
+
+client_id = "cbb1fe4a34f3dc70bfde496291d80328"
+application_url = "https://nq-shoppable-queuniverse.fly.dev"
+embedded = true
+name = "NQ-Shoppable-Queuniverse"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_products,write_products,write_files"
+
+[app_proxy]
+url = "https://nq-shoppable-queuniverse.fly.dev"
+subpath = "nq-videos"
+prefix = "apps"
+
+[webhooks]
+api_version = "2026-07"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = [ "app/uninstalled" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/scopes_update"
+  topics = [ "app/scopes_update" ]
+
+[auth]
+redirect_urls = [ "https://nq-shoppable-queuniverse.fly.dev/auth/callback" ]
+
+[build]
+automatically_update_urls_on_dev = true

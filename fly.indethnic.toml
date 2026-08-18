@@ -1,0 +1,32 @@
+# Fly config for the Indethnic deployment.
+# Deploy with:  fly deploy -c fly.indethnic.toml -a nq-shoppable-indethnic
+# (claura, lovecovera and sumannathwani keep their own configs — no collisions.)
+
+app = "nq-shoppable-indethnic"
+primary_region = "sin"
+
+[build]
+
+[env]
+  PORT = "3000"
+  NODE_ENV = "production"
+
+# No volume needed — data lives in Neon Postgres (set via DATABASE_URL secret);
+# videos live in this client's own Cloudflare R2 (set via R2_* secrets).
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 200
+    hard_limit = 250
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
