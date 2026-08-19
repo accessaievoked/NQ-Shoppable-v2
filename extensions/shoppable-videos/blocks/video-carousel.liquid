@@ -31,6 +31,17 @@
   }
 
   {%- comment -%}
+    Also apply the same price colour to the prices shown BELOW each video
+    thumbnail in the carousel (product_below_3, product_below_2, feed_on_scroll
+    tile types). Scoped to this block's section so sections on the same page
+    can have independent colour settings.
+  {%- endcomment -%}
+  #nq-sec-{{ block.id }} .nq-below-price,
+  #nq-sec-{{ block.id }} .nq-card-price {
+    color: {{ nq_price_color }} !important;
+  }
+
+  {%- comment -%}
     Instagram handle colour in the featured caption. Scoped to this block so the
     product page can differ from the home page.
   {%- endcomment -%}
