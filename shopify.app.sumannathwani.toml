@@ -1,0 +1,39 @@
+# Shopify app config for the Suman Nathwani deployment.
+# Switch to it with:  shopify app config use sumannathwani
+# Then deploy the extension + config with:  shopify app deploy
+#
+# client_id is the real Client ID of the "NQ-Shoppable-Suman Nathwani" app,
+# created in the Shopify Dev Dashboard (not via `shopify app config link`).
+# App URL, redirect URL and app proxy were set on the Dev Dashboard version too,
+# so this file and the dashboard agree.
+
+client_id = "c3c932b24edc9dfcd28ac689d365a8a0"
+application_url = "https://nq-shoppable-sumannathwani.fly.dev"
+embedded = true
+name = "NQ-Shoppable-Suman Nathwani"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_products,write_products,write_files"
+
+[app_proxy]
+url = "https://nq-shoppable-sumannathwani.fly.dev"
+subpath = "nq-videos"
+prefix = "apps"
+
+[webhooks]
+api_version = "2026-07"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = [ "app/uninstalled" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/scopes_update"
+  topics = [ "app/scopes_update" ]
+
+[auth]
+redirect_urls = [ "https://nq-shoppable-sumannathwani.fly.dev/auth/callback" ]
+
+[build]
+automatically_update_urls_on_dev = true
