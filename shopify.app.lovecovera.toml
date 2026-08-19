@@ -1,0 +1,39 @@
+# Shopify app config for the lovecovera.com deployment.
+# Switch to it with:  shopify app config use lovecovera
+# Then deploy the extension + config with:  shopify app deploy
+#
+# IMPORTANT: client_id below is a PLACEHOLDER. It must match a real app in the
+# Partner Dashboard. Easiest way to get it right: run `shopify app config link`,
+# create/select the new lovecovera app — the CLI will fill client_id for you.
+# (You can then merge these URL/proxy/webhook settings into the generated file.)
+
+client_id = "09b9d7bfad0cfecd7eead39e8ef729d4"
+application_url = "https://nq-shoppable-lovecovera.fly.dev"
+embedded = true
+name = "Lovecovera Shoppable Videos"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_products,write_products,write_files"
+
+[app_proxy]
+url = "https://nq-shoppable-lovecovera.fly.dev"
+subpath = "nq-videos"
+prefix = "apps"
+
+[webhooks]
+api_version = "2026-07"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = [ "app/uninstalled" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/scopes_update"
+  topics = [ "app/scopes_update" ]
+
+[auth]
+redirect_urls = [ "https://nq-shoppable-lovecovera.fly.dev/auth/callback" ]
+
+[build]
+automatically_update_urls_on_dev = true
