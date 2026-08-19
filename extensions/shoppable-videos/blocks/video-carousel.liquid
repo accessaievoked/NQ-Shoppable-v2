@@ -9,6 +9,47 @@
   @media (max-width: 767px) {
     #nq-sec-{{ block.id }} .nq-heading { font-size: {{ block.settings.heading_size_mobile }}px !important; }
   }
+
+  {%- comment -%}
+    Reel price colour. The fullscreen player (#nq-modal) is shared across every
+    carousel on the page, so this rule is intentionally global — set it once and
+    every reel matches. If two sections set different values the last one wins.
+
+    Emitted unconditionally. The earlier version wrapped this in a conditional
+    testing the setting against blank, which does not behave for colour settings
+    the way it does for text settings — a colour returns an object, so the test
+    failed and the rule silently disappeared. The setting has a default, so it
+    is always safe to emit. Selectors are listed several ways because the
+    overlay markup differs slightly between tile types.
+  {%- endcomment -%}
+  {%- assign nq_price_color = block.settings.reel_price_color | default: '#1a1a1a' -%}
+  #nq-modal .nq-prod-price,
+  #nq-modal .nq-prod-prices .nq-prod-price,
+  #nq-product-card .nq-prod-price,
+  .nq-product-overlay .nq-prod-price {
+    color: {{ nq_price_color }} !important;
+  }
+
+  {%- comment -%}
+    Also apply the same price colour to the prices shown BELOW each video
+    thumbnail in the carousel (product_below_3, product_below_2, feed_on_scroll
+    tile types). Scoped to this block's section so sections on the same page
+    can have independent colour settings.
+  {%- endcomment -%}
+  #nq-sec-{{ block.id }} .nq-below-price,
+  #nq-sec-{{ block.id }} .nq-card-price {
+    color: {{ nq_price_color }} !important;
+  }
+
+  {%- comment -%}
+    Instagram handle colour in the featured caption. Scoped to this block so the
+    product page can differ from the home page.
+  {%- endcomment -%}
+  {%- assign nq_handle_color = block.settings.handle_color | default: '#ef748b' -%}
+  #nq-sec-{{ block.id }} .nq-feature-link,
+  #nq-sec-{{ block.id }} .nq-feature-caption .nq-feature-link {
+    color: {{ nq_handle_color }} !important;
+  }
 </style>
 
 {%- comment -%} On a product page the whole section is shown on mobile only (nq-pdp-mobile-only). {%- endcomment -%}
@@ -202,11 +243,13 @@
       "default": "left"
     },
     { "type": "color",    "id": "shop_btn_color", "label": "Shop Now Button Color", "default": "#000000" },
+    { "type": "color",    "id": "reel_price_color", "label": "Reel Price Color", "info": "Colour of the price on the product card inside the fullscreen reel. Applies to every reel on the page.", "default": "#1a1a1a" },
     { "type": "checkbox", "id": "autoplay",       "label": "Autoplay on hover",     "default": true },
     { "type": "checkbox", "id": "show_views",     "label": "Show view count",       "default": true },
     { "type": "header", "content": "Featured Caption (mobile)" },
     { "type": "text", "id": "feature_caption", "label": "Caption text", "default": "Want to be featured here? Send us your Claura video or tag" },
     { "type": "text", "id": "instagram_handle", "label": "Instagram handle (clickable)", "default": "@claura.in" },
+    { "type": "color", "id": "handle_color", "label": "Instagram handle color", "info": "Applies to this section only, so the product page can differ from the home page.", "default": "#ef748b" },
     { "type": "text", "id": "instagram_url", "label": "Instagram URL", "default": "https://www.instagram.com/claura.in" },
     { "type": "text", "id": "feature_caption_suffix", "label": "Caption text after handle", "default": "on Instagram" }
   ]
