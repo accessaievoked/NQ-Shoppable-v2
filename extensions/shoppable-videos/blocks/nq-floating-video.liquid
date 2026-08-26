@@ -1,0 +1,289 @@
+{%- comment -%}
+  NQ Floating Video (V2)
+
+  A small fixed-position video that floats over the page. Fully self-contained:
+  it does not touch the carousel block or its shared JS, and it only renders
+  where the merchant adds this block, so existing stores are unaffected.
+
+  Modes:
+    rectangle → opens the full reel in the V2 modal (falls back to the product
+                page when no carousel/modal exists on the page)
+    circle    → smooth-scrolls to the carousel and opens its first video
+
+  Placement:
+    product   → product pages only; appears once Add-to-Cart scrolls out of view
+    all       → every page; appears after the visitor scrolls a little
+{%- endcomment -%}
+
+{{ 'nq-floating.css' | asset_url | stylesheet_tag }}
+
+{%- assign nq_mode  = block.settings.widget_mode -%}
+{%- assign nq_pos   = block.settings.position -%}
+{%- assign nq_place = block.settings.placement -%}
+{%- assign nq_w_desk = block.settings.widget_size_desktop -%}
+{%- assign nq_w_mob  = block.settings.widget_size_mobile -%}
+
+{%- comment -%} Rectangle keeps a 9:16 portrait ratio; circle is square. {%- endcomment -%}
+{%- assign nq_h_desk = nq_w_desk | times: 1.78 | round -%}
+{%- assign nq_h_mob  = nq_w_mob  | times: 1.78 | round -%}
+{%- if nq_mode == 'circle' -%}
+  {%- assign nq_h_desk = nq_w_desk -%}
+  {%- assign nq_h_mob  = nq_w_mob -%}
+{%- endif -%}
+
+{%- comment -%} Render only where the merchant asked for it. {%- endcomment -%}
+{%- if nq_place == 'all' or product -%}
+
+<div
+  class="nq-float-wrap nq-mode-{{ nq_mode }} nq-pos-{{ nq_pos }}"
+  id="nq-float-{{ block.id }}"
+  style="display:none; width:{{ nq_w_desk }}px; height:{{ nq_h_desk }}px;"
+  data-block-id="{{ block.id }}"
+  data-mode="{{ nq_mode }}"
+  data-placement="{{ nq_place }}"
+  data-product-id="{{ product.id }}"
+  data-product-handle="{{ product.handle }}"
+  data-w-desk="{{ nq_w_desk }}"
+  data-h-desk="{{ nq_h_desk }}"
+  data-w-mob="{{ nq_w_mob }}"
+  data-h-mob="{{ nq_h_mob }}"
+  role="button"
+  tabindex="0"
+  aria-label="Watch shoppable video"
+>
+  {%- if nq_mode == 'circle' -%}
+    <span class="nq-circle-hint">{{ block.settings.circle_hint | default: '▼ Watch video' }}</span>
+  {%- endif -%}
+
+  <button class="nq-float-close" id="nq-float-close-{{ block.id }}" type="button" aria-label="Close video">&#10005;</button>
+
+  <div class="nq-float-video-wrap">
+    <video class="nq-float-video" id="nq-float-video-{{ block.id }}" muted loop playsinline webkit-playsinline preload="none"></video>
+    <button class="nq-float-mute" id="nq-float-mute-{{ block.id }}" type="button" aria-label="Toggle sound">&#128263;</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  var blockId = {{ block.id | json }};
+  var wrap = document.getElementById('nq-float-' + blockId);
+  if (!wrap || wrap.dataset.nqInit) return;
+  wrap.dataset.nqInit = '1';
+
+  var videoEl = document.getElementById('nq-float-video-' + blockId);
+  var closeBtn = document.getElementById('nq-float-close-' + blockId);
+  var muteBtn  = document.getElementById('nq-float-mute-' + blockId);
+
+  var mode      = wrap.dataset.mode;
+  var placement = wrap.dataset.placement;
+  var isMuted = true;
+  var manuallyClosed = false;
+  var videos = [];
+
+  /* ── Responsive sizing ── */
+  function applySize() {
+    var isMob = window.innerWidth <= 768;
+    wrap.style.width  = (isMob ? wrap.dataset.wMob : wrap.dataset.wDesk) + 'px';
+    wrap.style.height = (isMob ? wrap.dataset.hMob : wrap.dataset.hDesk) + 'px';
+  }
+  applySize();
+  window.addEventListener('resize', applySize, { passive: true });
+
+  /* ── Show / hide ── */
+  function showFloat() {
+    if (manuallyClosed || !videoEl.src) return;
+    applySize();
+    wrap.style.display = 'block';
+    setTimeout(function () { wrap.classList.add('nq-float-visible'); }, 60);
+    var p = videoEl.play(); if (p && p.catch) p.catch(function () {});
+  }
+  function hideFloat() {
+    wrap.classList.remove('nq-float-visible');
+    setTimeout(function () {
+      if (!wrap.classList.contains('nq-float-visible')) wrap.style.display = 'none';
+    }, 320);
+    try { videoEl.pause(); } catch (e) {}
+  }
+
+  /* ── Tap action ── */
+  function openAction() {
+    if (mode === 'circle') {
+      // Scroll to the carousel and open its first video.
+      var target = document.querySelector('.nq-shoppable-carousel') || document.querySelector('.nq-section');
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setTimeout(function () {
+          var firstCard = target.querySelector('.nq-card');
+          if (firstCard) firstCard.click();
+        }, 700);
+        return;
+      }
+    }
+    // Rectangle (or circle with no carousel on the page): open the V2 modal.
+    // The modal is created by the carousel block, so fall back to the product
+    // page when this block is used on a page without a carousel.
+    if (window._nqOpenModal && videos.length) {
+      window._nqOpenModal(videos, 0);
+    } else if (videos.length && videos[0].productUrl) {
+      window.location.href = videos[0].productUrl;
+    }
+  }
+
+  wrap.addEventListener('click', function (e) {
+    if (e.target.closest('.nq-float-close') || e.target.closest('.nq-float-mute')) return;
+    openAction();
+  });
+  wrap.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAction(); }
+  });
+
+  if (closeBtn) {
+    closeBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      manuallyClosed = true;
+      hideFloat();
+    });
+  }
+
+  if (muteBtn) {
+    muteBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      isMuted = !isMuted;
+      videoEl.muted = isMuted;
+      muteBtn.innerHTML = isMuted ? '&#128263;' : '&#128266;';
+    });
+  }
+
+  /* ── Reveal rules ── */
+  // Product pages: show once the Add-to-Cart button has scrolled out of view,
+  // so the widget never competes with the buy box.
+  function watchCartButton() {
+    var selectors = [
+      '[name="add"]', '[id*="add-to-cart"]', '[id*="AddToCart"]',
+      '.add-to-cart', '.product-form__submit', '#ProductSubmitButton',
+      '.btn--add-to-cart', '[data-add-to-cart]',
+      'button[type="submit"].product-form__cart-submit'
+    ];
+    var cartBtn = null;
+    for (var i = 0; i < selectors.length && !cartBtn; i++) cartBtn = document.querySelector(selectors[i]);
+    if (!cartBtn) {
+      var btns = document.querySelectorAll('button, input[type=submit]');
+      for (var j = 0; j < btns.length; j++) {
+        var txt = (btns[j].textContent || btns[j].value || '').toLowerCase();
+        if (txt.indexOf('add to cart') >= 0 || txt.indexOf('buy now') >= 0) { cartBtn = btns[j]; break; }
+      }
+    }
+    if (!cartBtn) { showFloat(); return; }   // no buy box found → just show it
+    var check = function () {
+      var rect = cartBtn.getBoundingClientRect();
+      if (rect.top > window.innerHeight) showFloat(); else hideFloat();
+    };
+    window.addEventListener('scroll', check, { passive: true });
+    check();
+  }
+
+  // Non-product pages: show after a small scroll so it doesn't cover the hero.
+  function watchScroll() {
+    var check = function () {
+      if (window.scrollY > 400) showFloat(); else hideFloat();
+    };
+    window.addEventListener('scroll', check, { passive: true });
+    check();
+  }
+
+  /* ── Fetch videos through the app proxy ── */
+  var params = new URLSearchParams();
+  var pid = (wrap.dataset.productId || '').trim();
+  var phandle = (wrap.dataset.productHandle || '').trim();
+  if (pid) params.set('product_id', pid);
+  if (phandle) params.set('product_handle', phandle);
+  var qs = params.toString();
+
+  fetch('/apps/nq-videos/api/videos' + (qs ? '?' + qs : ''), { headers: { 'Accept': 'application/json' } })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      videos = (data && data.videos) || [];
+      if (!videos.length) return;   // nothing tagged → widget stays hidden
+
+      var v = videos[0];
+      // Prefer the tiny preview clip (a few hundred KB) over the full reel —
+      // this widget is small, so the clip is plenty and keeps the page light.
+      videoEl.src = v.previewUrl || v.videoUrl;
+      if (v.thumbnailUrl) videoEl.poster = v.thumbnailUrl;
+      // Mobile autoplay needs these as attributes, not just properties.
+      videoEl.muted = true;
+      videoEl.setAttribute('muted', '');
+      videoEl.setAttribute('playsinline', '');
+      videoEl.setAttribute('webkit-playsinline', '');
+
+      if (placement === 'product' && pid) setTimeout(watchCartButton, 800);
+      else watchScroll();
+    })
+    .catch(function () {});
+})();
+</script>
+
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "NQ Floating Video",
+  "target": "section",
+  "settings": [
+    {
+      "type": "select",
+      "id": "placement",
+      "label": "Show On",
+      "info": "Product pages show a video tagged to that product. All pages shows the newest video.",
+      "options": [
+        { "value": "product", "label": "Product pages only" },
+        { "value": "all",     "label": "All pages" }
+      ],
+      "default": "product"
+    },
+    {
+      "type": "select",
+      "id": "widget_mode",
+      "label": "Widget Style",
+      "info": "Rectangle opens the video popup. Circle scrolls down to the video carousel.",
+      "options": [
+        { "value": "rectangle", "label": "Rectangle (opens video popup)" },
+        { "value": "circle",    "label": "Circle (scrolls to carousel)" }
+      ],
+      "default": "rectangle"
+    },
+    {
+      "type": "select",
+      "id": "position",
+      "label": "Position",
+      "options": [
+        { "value": "bottom-right", "label": "Bottom Right" },
+        { "value": "bottom-left",  "label": "Bottom Left" },
+        { "value": "mid-right",    "label": "Middle Right" },
+        { "value": "mid-left",     "label": "Middle Left" }
+      ],
+      "default": "bottom-right"
+    },
+    {
+      "type": "range",
+      "id": "widget_size_desktop",
+      "label": "Size — Desktop (px)",
+      "info": "Width for rectangle, diameter for circle",
+      "min": 60, "max": 280, "step": 10, "default": 140
+    },
+    {
+      "type": "range",
+      "id": "widget_size_mobile",
+      "label": "Size — Mobile (px)",
+      "info": "Width for rectangle, diameter for circle",
+      "min": 50, "max": 160, "step": 10, "default": 80
+    },
+    {
+      "type": "text",
+      "id": "circle_hint",
+      "label": "Circle hint text",
+      "default": "▼ Watch video"
+    }
+  ]
+}
+{% endschema %}

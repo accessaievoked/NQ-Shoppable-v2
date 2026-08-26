@@ -1,0 +1,182 @@
+/* ============================================================
+   NQ Floating Video Widget (V2)
+   A small fixed-position video that floats over the page.
+   Two modes: rectangle (opens the reel modal) and circle
+   (scrolls to the carousel). Sizes/position come from the
+   block settings via inline styles + position classes.
+   Self-contained: nothing here affects the carousel styles.
+   ============================================================ */
+
+/* ── Base wrap ── */
+.nq-float-wrap {
+  position: fixed;
+  z-index: 9000;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(20px) scale(0.92);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+
+.nq-float-wrap.nq-float-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
+/* ── RECTANGLE mode ── */
+.nq-float-wrap.nq-mode-rectangle {
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.32);
+  background: #000;
+  cursor: pointer;
+}
+
+/* ── CIRCLE mode ── */
+.nq-float-wrap.nq-mode-circle {
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 3px #fff,
+    0 0 0 5px rgba(0,0,0,0.15),
+    0 8px 32px rgba(0,0,0,0.40);
+  background: #000;
+  cursor: pointer;
+}
+
+/* Circle pulse ring */
+.nq-float-wrap.nq-mode-circle::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(255,255,255,0.6);
+  animation: nq-pulse-ring 2.4s ease-out infinite;
+  pointer-events: none;
+  z-index: 20;
+}
+
+@keyframes nq-pulse-ring {
+  0%   { transform: scale(1);    opacity: 0.8; }
+  60%  { transform: scale(1.12); opacity: 0; }
+  100% { transform: scale(1.12); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nq-float-wrap.nq-mode-circle::before { animation: none; }
+  .nq-float-wrap { transition: opacity 0.2s ease; }
+}
+
+/* ── Video ── */
+.nq-float-video-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.nq-float-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* ── Circle hint label ── */
+.nq-circle-hint {
+  position: absolute;
+  bottom: -28px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-family: 'Poppins', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: rgba(0,0,0,0.55);
+  background: #fff;
+  border-radius: 20px;
+  padding: 3px 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+}
+
+.nq-float-wrap.nq-mode-circle:hover .nq-circle-hint { opacity: 1; }
+
+/* ── Close button ── */
+.nq-float-close {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  background: rgba(0,0,0,0.65);
+  border: none;
+  color: #fff;
+  font-size: 10px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  cursor: pointer;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, transform 0.15s;
+  line-height: 1;
+  padding: 0;
+}
+.nq-float-close:hover { background: rgba(0,0,0,0.9); transform: scale(1.1); }
+
+/* ── Mute button ── */
+.nq-float-mute {
+  position: absolute;
+  bottom: 5px;
+  right: 5px;
+  background: rgba(0,0,0,0.65);
+  border: none;
+  color: #fff;
+  font-size: 10px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  cursor: pointer;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.2s;
+}
+.nq-float-mute:hover { background: rgba(0,0,0,0.9); }
+
+/* Circle mode: the whole circle is the control */
+.nq-mode-circle .nq-float-close,
+.nq-mode-circle .nq-float-mute { display: none; }
+
+.nq-mode-circle .nq-float-video-wrap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0) 70%);
+  pointer-events: none;
+}
+
+/* ── Positions ── */
+.nq-pos-bottom-right { bottom: 24px; right: 20px; left: auto; }
+.nq-pos-bottom-left  { bottom: 24px; left: 20px;  right: auto; }
+.nq-pos-mid-right    { top: 50%; right: 20px; left: auto; transform: translateY(-50%) scale(0.92); }
+.nq-pos-mid-left     { top: 50%; left: 20px;  right: auto; transform: translateY(-50%) scale(0.92); }
+
+.nq-pos-mid-right.nq-float-visible,
+.nq-pos-mid-left.nq-float-visible { transform: translateY(-50%) scale(1); opacity: 1; }
+
+/* Lift above sticky mobile bars */
+@media (max-width: 768px) {
+  .nq-pos-bottom-right, .nq-pos-bottom-left { bottom: 80px; }
+}
+
+/* Never cover the open reel modal */
+body.nq-modal-open .nq-float-wrap {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
