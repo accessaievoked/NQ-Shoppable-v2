@@ -16,6 +16,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { uploadToR2, deleteFromR2ByUrl } from "../r2.server";
 import { processVideo } from "../ffmpeg.server";
+import { pushVideoToProduct, syncPendingProductMedia } from "../shopifyMedia.server";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Product = {
@@ -96,7 +97,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 // ─── Action: save video ───────────────────────────────────────────────────────
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  // `admin` is needed after the response returns, for the auto-add to the
+  // product page — it holds the shop's offline token, so it stays usable.
+  const { session, admin } = await authenticate.admin(request);
 
   const formData = await request.formData();
   const title         = (formData.get("title") as string)?.trim();
@@ -174,7 +177,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // ── Process video in background (compress + HLS + thumbnail) ─────────────
   // Do NOT await — this lets the response return immediately, avoiding 502s on large files.
-  processVideo(videoUrl, baseKey)
+  // Persist ffmpeg's progress, throttled. Without this a job that dies — the
+  // machine stopping, an ffmpeg crash — is indistinguishable from a slow one,
+  // and the card sits on "Processing..." with no way to tell which.
+  let lastWrite = 0;
+  const onProgress = (pct: number) => {
+    const now = Date.now();
+    if (now - lastWrite < 2000) return; // at most one write every 2s
+    lastWrite = now;
+    db.video
+      .update({ where: { id: video.id }, data: { processingProgress: pct } })
+      .catch(() => {});
+  };
+
+  processVideo(videoUrl, baseKey, onProgress)
     .then(async (processed) => {
       await db.video.update({
         where: { id: video.id },
@@ -183,6 +199,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           streamUrl: processed.streamUrl,
           previewUrl: processed.previewUrl,
           thumbnailUrl: processed.thumbnailUrl,
+          processingProgress: 100,
+          processingError: null,
         },
       });
 
@@ -200,9 +218,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       console.log(`[Video] Background processing complete for video ${video.id}`);
+
+      // Auto-add to the tagged product's page. Uploading a video against a
+      // product almost always means you want it visible there, so the manual
+      // "Add media" step is skipped. Runs here rather than at save time because
+      // Shopify needs the finished, compressed file — at save time videoUrl is
+      // still the raw upload, which gets deleted a few lines above.
+      if (productId) {
+        try {
+          const ready = await db.video.findUnique({ where: { id: video.id } });
+          if (ready?.videoUrl) {
+            const push = await pushVideoToProduct(admin, session.shop, ready, productId);
+            if (push.ok) {
+              // Attach it once Shopify finishes transcoding.
+              await syncPendingProductMedia(admin, session.shop);
+              console.log(`[Video] Added video ${video.id} to product page`);
+            } else {
+              // Most likely the store's plan video allowance. Not fatal — the
+              // video still works in the storefront carousel, and the reason is
+              // shown on the Product pages screen.
+              console.warn(`[Video] Could not add ${video.id} to product page: ${push.error}`);
+            }
+          }
+        } catch (pushErr) {
+          console.error(`[Video] Auto-add to product page failed for ${video.id}:`, pushErr);
+        }
+      }
     })
-    .catch((err) => {
+    .catch(async (err) => {
       console.error(`[Video] Background processing failed for video ${video.id}:`, err);
+      // Record it so the library card can say what went wrong instead of
+      // showing "Processing..." indefinitely.
+      await db.video
+        .update({
+          where: { id: video.id },
+          data: { processingError: String(err?.message ?? err).slice(0, 300) },
+        })
+        .catch(() => {});
     });
 
   return redirect("/app");

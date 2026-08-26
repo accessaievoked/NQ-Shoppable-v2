@@ -58,15 +58,40 @@ function extractFrame(inputPath: string, outPath: string, timeOffset = 1): Promi
  *    start playback after the first few KB instead of downloading the whole file.
  *  - yuv420p for universal browser/mobile compatibility.
  */
-function compressToMp4(inputPath: string, outPath: string): Promise<void> {
+function compressToMp4(
+  inputPath: string,
+  outPath: string,
+  onPercent?: (pct: number) => void
+): Promise<void> {
   return new Promise((resolve, reject) => {
     ffmpeg(inputPath)
+      // The compress pass dominates the total time, so its percentage is a fair
+      // proxy for overall progress. fluent-ffmpeg's `percent` can be undefined
+      // or drift slightly past 100 on short clips, hence the clamp.
+      .on("progress", (p: { percent?: number }) => {
+        if (onPercent && typeof p.percent === "number" && !Number.isNaN(p.percent)) {
+          // Map the encode onto 5-99, leaving the first 5% to the download step
+          // so the bar never appears to go backwards.
+          const pct = 5 + (Math.max(0, Math.min(100, p.percent)) * 94) / 100;
+          onPercent(Math.max(5, Math.min(99, Math.round(pct))));
+        }
+      })
       .outputOptions([
         "-vf", "scale='min(720,iw)':-2", // cap width at 720, keep aspect, even height
         "-c:v", "libx264",
         "-profile:v", "high",     // better compression than main; universally supported
-        "-preset", "slow",         // SAME quality (crf unchanged), smaller file; slower encode
-        "-crf", "30",              // quality knob — unchanged, so visual quality is identical
+        // Encoder threads each hold their own frame buffers, and x264 defaults
+        // to one per core plus lookahead. Capping at 2 keeps peak memory well
+        // clear of the limit; the VM only has 1 shared CPU, so extra threads
+        // bought little anyway.
+        "-threads", "2",
+        // veryfast, not slow. Preset trades encode TIME for file size at a
+        // fixed CRF — it doesn't change visual quality. On a single shared vCPU
+        // `slow` took minutes per reel; `veryfast` is roughly 5-6x quicker.
+        // CRF nudged 30 -> 31 to claw back most of the size the faster preset
+        // costs, which is imperceptible on a phone-sized reel.
+        "-preset", "veryfast",
+        "-crf", "31",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "96k",
@@ -98,8 +123,12 @@ function makeCardClip(inputPath: string, outPath: string): Promise<void> {
         "-vf", "scale='min(480,iw)':-2",
         "-c:v", "libx264",
         "-profile:v", "main",
-        "-preset", "slow",
-        "-crf", "32",
+        "-threads", "2",           // same memory reasoning as the reel encode above
+        // Same reasoning as the reel encode above. This clip is only ~3s, so it
+        // was never the bottleneck, but there's no reason to pay for `slow` on
+        // a thumbnail-sized asset.
+        "-preset", "veryfast",
+        "-crf", "33",
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
       ])
@@ -126,7 +155,8 @@ function makeCardClip(inputPath: string, outPath: string): Promise<void> {
  */
 export async function processVideo(
   mp4Url: string,
-  baseKey: string
+  baseKey: string,
+  onProgress?: (pct: number) => void
 ): Promise<{ compressedUrl: string; streamUrl: string | null; thumbnailUrl: string; previewUrl: string | null }> {
   const tmpDir         = await fs.mkdtemp(path.join(os.tmpdir(), "nq-video-"));
   const inputPath      = path.join(tmpDir, "input.mp4");
@@ -134,15 +164,21 @@ export async function processVideo(
   const compressedPath = path.join(tmpDir, "compressed.mp4");
 
   try {
-    // 1. Download the original video
+    // 1. Download the original video.
+    //
+    // Nothing reports progress during this step, and on a large phone video it
+    // can run for a while — which looked identical to a dead job. Claim a small
+    // slice of the bar so the UI can distinguish "fetching" from "stalled".
     console.log(`[Video] Downloading ${mp4Url}`);
+    onProgress?.(1);
     await downloadToTemp(mp4Url, inputPath);
+    onProgress?.(5);
 
     // 2. Extract thumbnail & compress to a small MP4 in parallel
     console.log(`[Video] Extracting thumbnail & compressing to MP4`);
     await Promise.all([
       extractFrame(inputPath, thumbPath, 1),
-      compressToMp4(inputPath, compressedPath),
+      compressToMp4(inputPath, compressedPath, onProgress),
     ]);
 
     // 3. Upload thumbnail (immutable, 1-year cache)

@@ -36,6 +36,12 @@ model Video {
   // Multiple tagged products (JSON array). The single fields above mirror the
   // first product for backwards compatibility.
   products        String   @default("[]")
+  // Background processing (ffmpeg compress + thumbnail + preview clip).
+  // progress is 0-100; error holds the reason when a run dies. Without these a
+  // failed job is indistinguishable from a slow one — the card just says
+  // "Processing..." forever.
+  processingProgress Int?
+  processingError    String?
   // Settings
   active          Boolean  @default(true)
   sortOrder       Int      @default(0)
@@ -44,6 +50,35 @@ model Video {
   atcCount        Int      @default(0)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+/// Links one of our R2-hosted videos to a copy of it living in Shopify's own
+/// product media gallery.
+///
+/// Shopify will not reference an external URL for video — it downloads the file
+/// and hosts its own transcoded copy. So a video that appears in the product
+/// gallery exists twice: our R2 object (used by the carousel and reel player)
+/// and Shopify's file (used by the theme's gallery). This row is the mapping
+/// between the two.
+///
+/// Position is deliberately NOT stored here. Shopify owns the ordering, and the
+/// merchant can reorder media in the Shopify admin at any time; caching it
+/// locally would guarantee drift.
+model ProductMedia {
+  id            String   @id @default(cuid())
+  shop          String
+  videoId       String // -> Video.id
+  productId     String // Shopify product GID, e.g. gid://shopify/Product/123
+  shopifyFileId String // gid://shopify/Video/456
+  // Mirrors Shopify's fileStatus: PENDING (we haven't called fileCreate yet),
+  // UPLOADED, PROCESSING, READY, FAILED.
+  status        String   @default("PENDING")
+  lastError     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, videoId, productId])
+  @@index([shop, status])
 }
 
 model AnalyticsEvent {
