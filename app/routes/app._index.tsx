@@ -4,12 +4,13 @@ import type {
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
-import { useLoaderData, useNavigate, Form, useNavigation, useSubmit, Link } from "react-router";
+import { useLoaderData, useNavigate, Form, useNavigation, useSubmit, useFetcher, useRevalidator, Link } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { deleteVideoFromR2 } from "../r2.server";
+import { processVideo } from "../ffmpeg.server";
 
 type Filter = "all" | "active" | "inactive";
 
@@ -33,7 +34,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const [videos, totalActive, totalInactive] = await Promise.all([
     db.video.findMany({
       where,
-      orderBy: { sortOrder: "asc" },
+      // Two keys, not one. sortOrder defaults to 0 and is only ever written by
+      // the drag-reorder action, so most rows tie — and a tied ORDER BY has no
+      // defined result order in Postgres. Because an UPDATE writes a new row
+      // version at the end of the heap, the video writing processingProgress
+      // every 2s kept drifting to the back of the list, visibly reshuffling the
+      // grid on each 5s poll. createdAt breaks the tie deterministically.
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
       select: {
         id: true,
         title: true,
@@ -51,6 +58,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         sortOrder: true,
         viewCount: true,
         atcCount: true,
+        // Needed by the processing badge. Omitting them here doesn't error —
+        // the fields just arrive undefined, so the percentage and the failure
+        // reason silently never render.
+        processingProgress: true,
+        processingError: true,
       },
     }),
     db.video.count({ where: { shop: session.shop, active: true } }),
@@ -75,6 +87,66 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (video) {
       await deleteVideoFromR2({ videoUrl: video.videoUrl, thumbnailUrl: video.thumbnailUrl, streamUrl: video.streamUrl });
       await db.video.delete({ where: { id: videoId } });
+    }
+  }
+
+  // Re-run the ffmpeg pipeline for a video whose background job never finished.
+  // Jobs are detached from the request so an upload returns immediately, which
+  // also means nothing retries them if the machine stops or ffmpeg dies — this
+  // is the manual retry.
+  if (intent === "reprocess") {
+    console.log(`[Video] Reprocess requested for ${videoId}`);
+    const video = await db.video.findFirst({ where: { id: videoId, shop: session.shop } });
+    if (!video?.videoUrl) {
+      console.warn(`[Video] Reprocess skipped — no source file for ${videoId}`);
+    }
+    if (video?.videoUrl) {
+      console.log(`[Video] Reprocess starting from ${video.videoUrl}`);
+      await db.video.update({
+        where: { id: videoId },
+        data: { processingError: null, processingProgress: 0 },
+      });
+
+      const slug = (video.title || video.productTitle || "video")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .slice(0, 40);
+      const baseKey = `${Date.now()}-${slug}`;
+
+      let lastWrite = 0;
+      const onProgress = (pct: number) => {
+        const now = Date.now();
+        if (now - lastWrite < 2000) return;
+        lastWrite = now;
+        db.video
+          .update({ where: { id: videoId }, data: { processingProgress: pct } })
+          .catch(() => {});
+      };
+
+      processVideo(video.videoUrl, baseKey, onProgress)
+        .then(async (processed) => {
+          await db.video.update({
+            where: { id: videoId },
+            data: {
+              videoUrl: processed.compressedUrl,
+              streamUrl: processed.streamUrl,
+              previewUrl: processed.previewUrl,
+              thumbnailUrl: processed.thumbnailUrl,
+              processingProgress: 100,
+              processingError: null,
+            },
+          });
+          console.log(`[Video] Reprocess complete for ${videoId}`);
+        })
+        .catch(async (err) => {
+          console.error(`[Video] Reprocess failed for ${videoId}:`, err);
+          await db.video
+            .update({
+              where: { id: videoId },
+              data: { processingError: String(err?.message ?? err).slice(0, 300) },
+            })
+            .catch(() => {});
+        });
     }
   }
 
@@ -126,8 +198,114 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
+/**
+ * Re-runs the ffmpeg pipeline for a video that never finished processing.
+ *
+ * Uses a fetcher rather than the page's Form so retrying one card doesn't
+ * navigate or disturb the rest of the grid.
+ */
+function RetryProcessing({ videoId }: { videoId: string }) {
+  const fetcher = useFetcher();
+  const busy = fetcher.state !== "idle";
+
+  return (
+    <fetcher.Form method="post" onClick={(e) => e.stopPropagation()}>
+      <input type="hidden" name="intent" value="reprocess" />
+      <input type="hidden" name="videoId" value={videoId} />
+      <button type="submit" disabled={busy} style={styles.retryBtn}>
+        {busy ? "Restarting…" : "↻ Retry processing"}
+      </button>
+    </fetcher.Form>
+  );
+}
+
+/**
+ * The position badge, made editable.
+ *
+ * Stepping a video from #1 to #12 used to mean eleven clicks on the arrow.
+ * Click the number instead, type where you want it, press Enter — the video
+ * lands on exactly that number and everything between closes ranks, which is
+ * the same splice the arrows already do, just in one hop.
+ *
+ * Kept as its own component so the half-typed number lives in per-card state
+ * and survives the library's 5-second revalidation while a video is encoding.
+ */
+function PositionInput({
+  position,
+  total,
+  onCommit,
+}: {
+  position: number;
+  total: number;
+  onCommit: (next: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(position));
+  // Escape blurs the field to close it, and blur is also what commits — so the
+  // cancel path needs a way to tell commit() to stand down.
+  const skipCommit = useRef(false);
+
+  function commit() {
+    setEditing(false);
+    if (skipCommit.current) {
+      skipCommit.current = false;
+      return;
+    }
+    const next = parseInt(draft, 10);
+    // Unparseable, out of range, or unchanged: just close, don't reorder.
+    if (!Number.isFinite(next) || next < 1 || next > total || next === position) return;
+    onCommit(next);
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        style={styles.orderPos}
+        onClick={() => { setDraft(String(position)); setEditing(true); }}
+        title="Click to type a position"
+        aria-label={`Position ${position} of ${total}. Click to change.`}
+      >#{position}</button>
+    );
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      autoFocus
+      value={draft}
+      onFocus={(e) => e.currentTarget.select()}
+      // Digits only — typing over a selected "1" should never leave "1e5" behind.
+      onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ""))}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+        if (e.key === "Escape") { skipCommit.current = true; e.currentTarget.blur(); }
+      }}
+      style={styles.orderPosInput}
+      aria-label={`Move to position, 1 to ${total}`}
+    />
+  );
+}
+
 export default function Index() {
   const { videos, filter, q, total, totalActive, totalInactive } = useLoaderData<typeof loader>();
+
+  // Refresh while anything is still encoding.
+  //
+  // ffmpeg runs detached on the server and writes its progress to the database,
+  // but this page had no polling — so the percentage only ever moved if you
+  // reloaded by hand, and a freshly uploaded video looked permanently stuck at
+  // "Processing...". A video is done when its thumbnail exists.
+  const revalidator = useRevalidator();
+  const anyProcessing = videos.some((v) => !v.thumbnailUrl);
+
+  useEffect(() => {
+    if (!anyProcessing) return;
+    const timer = setInterval(() => revalidator.revalidate(), 5000);
+    return () => clearInterval(timer);
+  }, [anyProcessing, revalidator]);
   const navigate    = useNavigate();
   const navigation  = useNavigation();
   const submit      = useSubmit();
@@ -143,12 +321,21 @@ export default function Index() {
   // whenever the loader returns fresh data.
   const [items, setItems] = useState(videos);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True from the moment a reorder is made until its save has round-tripped.
+  const pendingSave = useRef(false);
   const canReorder = !q; // reordering a filtered/searched subset would be confusing
 
-  useEffect(() => { setItems(videos); }, [videos]);
+  useEffect(() => {
+    // While a video is encoding this page revalidates every 5s. Without this
+    // guard that poll can land between a reorder and its debounced save and
+    // snap every card back to the old order for a beat.
+    if (pendingSave.current) return;
+    setItems(videos);
+  }, [videos]);
 
   function reorder(newItems: typeof videos) {
     setItems(newItems);
+    pendingSave.current = true;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     // Debounce so rapid moves only trigger one save of the final order.
     saveTimer.current = setTimeout(() => {
@@ -156,6 +343,9 @@ export default function Index() {
       fd.set("intent", "reorder");
       fd.set("order", JSON.stringify(newItems.map((v) => v.id)));
       submit(fd, { method: "post" });
+      // Hand control back to the server's copy once the write has landed.
+      // Always clears, so a failed save can't freeze the list permanently.
+      setTimeout(() => { pendingSave.current = false; }, 1500);
     }, 500);
   }
 
@@ -266,6 +456,15 @@ export default function Index() {
         Upload videos
       </s-button>
 
+      {/* Product pages — push videos into the product's own media gallery */}
+      <s-button
+        slot="secondary-actions"
+        variant="secondary"
+        onClick={() => navigate("/app/product-media")}
+      >
+        Product pages
+      </s-button>
+
       {total === 0 && !q ? (
         <s-section>
           <div style={styles.emptyState}>
@@ -360,7 +559,37 @@ export default function Index() {
                         now intentionally null since we serve compressed MP4, not HLS). */}
                     {!video.thumbnailUrl && (
                       <div style={styles.processingBadge}>
-                        ⏳ Processing…
+                        {video.processingError ? (
+                          <>
+                            <div>⚠️ Processing failed</div>
+                            <div style={styles.processingErr} title={video.processingError}>
+                              {video.processingError}
+                            </div>
+                            <RetryProcessing videoId={video.id} />
+                          </>
+                        ) : (
+                          <>
+                            <div>
+                              ⏳ Processing…
+                              {typeof video.processingProgress === "number" &&
+                                ` ${video.processingProgress}%`}
+                            </div>
+                            {/* Thin bar under the label. Indeterminate until
+                                ffmpeg reports its first percentage. */}
+                            <div style={styles.progressTrack}>
+                              <div
+                                style={{
+                                  ...styles.progressFill,
+                                  width: `${video.processingProgress ?? 0}%`,
+                                }}
+                              />
+                            </div>
+                            {/* A job that died without recording an error looks
+                                identical to one still running, so offer the
+                                retry here too rather than only on failure. */}
+                            <RetryProcessing videoId={video.id} />
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
@@ -375,7 +604,11 @@ export default function Index() {
                         title="Move earlier"
                         aria-label="Move earlier"
                       >←</button>
-                      <span style={styles.orderPos}>#{i + 1}</span>
+                      <PositionInput
+                        position={i + 1}
+                        total={items.length}
+                        onCommit={(next) => moveItem(i, next - 1)}
+                      />
                       <button
                         style={{ ...styles.orderBtn, ...(i === items.length - 1 ? styles.orderBtnDisabled : {}) }}
                         onClick={() => moveItem(i, i + 1)}
@@ -592,10 +825,46 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "20px",
   },
 
+  retryBtn: {
+    marginTop: "10px",
+    padding: "5px 12px",
+    borderRadius: "999px",
+    border: "1px solid rgba(255,255,255,0.5)",
+    background: "rgba(255,255,255,0.12)",
+    color: "#fff",
+    fontSize: "11px",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  progressTrack: {
+    width: "120px",
+    height: "5px",
+    borderRadius: "999px",
+    background: "rgba(255,255,255,0.28)",
+    marginTop: "8px",
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    background: "#fff",
+    borderRadius: "999px",
+    transition: "width 400ms ease",
+  },
+  processingErr: {
+    marginTop: "6px",
+    maxWidth: "150px",
+    fontSize: "10px",
+    fontWeight: 400,
+    lineHeight: 1.35,
+    color: "#ffd9d4",
+    maxHeight: "48px",
+    overflow: "hidden",
+  },
   processingBadge: {
     position: "absolute",
     inset: 0,
     display: "flex",
+    flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
     background: "rgba(0,0,0,0.55)",
@@ -645,8 +914,31 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "12px",
     fontWeight: 700,
     color: "#6b7280",
-    minWidth: "30px",
+    minWidth: "34px",
+    height: "26px",
+    padding: "0 5px",
     textAlign: "center",
+    fontFamily: "inherit",
+    // A faint box so it reads as editable rather than as a static caption.
+    border: "1px solid #e5e7eb",
+    borderRadius: "6px",
+    background: "#fff",
+    cursor: "text",
+  },
+
+  orderPosInput: {
+    width: "34px",
+    height: "26px",
+    padding: "0 5px",
+    fontSize: "12px",
+    fontWeight: 700,
+    color: "#111827",
+    textAlign: "center",
+    fontFamily: "inherit",
+    border: "1px solid #2563eb",
+    borderRadius: "6px",
+    background: "#fff",
+    outline: "none",
   },
 
   productRow: {

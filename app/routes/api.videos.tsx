@@ -37,7 +37,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
       // Home/collection: active only. PDP: all (active + inactive), filtered to
       // the product below.
       where: isPdp ? { shop } : { shop, active: true },
-      orderBy: { sortOrder: "asc" },
+      // Tie-break on createdAt — see the note in app._index.tsx. Matters more
+      // here: api.track increments viewCount on every storefront view, so with
+      // a single tied sort key the carousel reordered itself as shoppers watched.
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
       select: {
         id: true,
         title: true,
