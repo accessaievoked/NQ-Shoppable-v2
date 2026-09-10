@@ -228,8 +228,15 @@
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   backdrop-filter: blur(3px);
+}
+
+/* View-count eye icon — inherits the badge's white colour via currentColor. */
+.nq-views .nq-eye {
+  display: block;
+  flex: 0 0 auto;
+  opacity: 0.95;
 }
 
 /* ============================================================

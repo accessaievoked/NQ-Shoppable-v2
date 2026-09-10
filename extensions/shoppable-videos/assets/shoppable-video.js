@@ -48,6 +48,20 @@
     return swiperLoadPromise;
   }
 
+  // ─── View-count eye icon ────────────────────────────────────────────
+  // Solid lens + ring pupil, drawn in currentColor so it picks up the badge's
+  // white text colour. Inline SVG (not a PNG asset) because this markup is
+  // built in JS, which has no access to Liquid's asset_url — and because it
+  // stays crisp at 12px and needs no transparent-background handling.
+  const NQ_EYE_ICON =
+    '<svg class="nq-eye" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+    '<path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>' +
+    '</svg>';
+
+  function nqViewsMarkup(count) {
+    return NQ_EYE_ICON + '<span>' + count + '</span>';
+  }
+
   // ─── Utility ────────────────────────────────────────────────────────
   function formatPrice(amount, currency) {
     try {
@@ -767,7 +781,7 @@
       if (v) {
         v.viewCount = (v.viewCount || 0) + 1;
         this.container.querySelectorAll('.nq-card[data-nq-idx="' + idx + '"] .nq-views')
-          .forEach((el) => { el.innerHTML = '&#128065; ' + v.viewCount; });
+          .forEach((el) => { el.innerHTML = nqViewsMarkup(v.viewCount); });
       }
     }
 
@@ -892,7 +906,7 @@
       if (s.showViews) {
         const views = document.createElement('div');
         views.className = 'nq-views';
-        views.innerHTML = '&#128065; ' + this.vViews(v);
+        views.innerHTML = nqViewsMarkup(this.vViews(v));
         card.appendChild(views);
       }
       this.applyTile(card, v, s);
@@ -1073,7 +1087,7 @@
           const card = document.createElement('div'); card.className = 'nq-side-card' + (i === 0 ? ' nq-side-active' : ''); card.dataset.idx = i;
           card.style.cssText = 'height:' + sideH + 'px;position:relative;';
           card.innerHTML = '<div class="nq-side-ring"></div>' + (this.vThumb(v) ? '<img src="' + this.vThumb(v) + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;">' : '');
-          const views = document.createElement('div'); views.className = 'nq-views'; views.innerHTML = '&#128065; ' + this.vViews(v); card.appendChild(views);
+          const views = document.createElement('div'); views.className = 'nq-views'; views.innerHTML = nqViewsMarkup(this.vViews(v)); card.appendChild(views);
           card.addEventListener('click', () => setActive(i));
           strip.appendChild(card);
         });
