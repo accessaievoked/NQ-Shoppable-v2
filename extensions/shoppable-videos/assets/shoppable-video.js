@@ -951,7 +951,10 @@
           { const vw = card.querySelector('.nq-views'); if (vw) vw.style.display = 'none'; } break;
         case 'feed_on_scroll': {
           card.classList.add('nq-scroll-fade');
-          let pr = price; if (compare && disc > 0) pr += ' <span class="nq-orig-price">' + compare + '</span>';
+          // Match the product_below tiles: struck-through compare price AND the
+          // discount. This tile previously showed the compare price but dropped
+          // the percentage, so the same product read differently per tile type.
+          let pr = price; if (compare && disc > 0) pr += ' <span class="nq-orig-price">' + compare + '</span><span class="nq-disc-badge">' + disc + '% off</span>';
           const info = document.createElement('div'); info.className = 'nq-below-info';
           info.innerHTML = '<p class="nq-below-title">' + title + '</p><p class="nq-below-price">' + pr + '</p>';
           card.appendChild(info); break;

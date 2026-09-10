@@ -93,6 +93,28 @@
     font-family: var(--nq-price-font);
     font-size: var(--nq-price-size);
   }
+
+  {%- comment -%}
+    Discount style. Default keeps the filled pill badge that every store
+    currently renders. "plain" strips the pill and shows the percentage as
+    accent-coloured uppercase text next to the struck-through price, matching
+    the way most themes present a markdown. Colour deliberately reuses the
+    price colour so the two always agree.
+  {%- endcomment -%}
+  {%- if block.settings.discount_style == 'plain' -%}
+  #nq-sec-{{ block.id }} .nq-disc-badge,
+  #nq-sec-{{ block.id }} .nq-card-discount {
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    color: {{ nq_price_color }};
+    font-family: var(--nq-price-font);
+    font-size: var(--nq-price-size);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+  }
+  {%- endif -%}
 </style>
 
 {%- comment -%} On a product page the whole section is shown on mobile only (nq-pdp-mobile-only). {%- endcomment -%}
@@ -349,7 +371,16 @@
       "default": "Poppins"
     },
     { "type": "range", "id": "price_size_desktop", "label": "Price size — Desktop (px)", "min": 10, "max": 24, "step": 1, "default": 13 },
-    { "type": "range", "id": "price_size_mobile",  "label": "Price size — Mobile (px)",  "min": 9,  "max": 20, "step": 1, "default": 13 }
+    { "type": "range", "id": "price_size_mobile",  "label": "Price size — Mobile (px)",  "min": 9,  "max": 20, "step": 1, "default": 13 },
+    {
+      "type": "select", "id": "discount_style", "label": "Discount style",
+      "info": "Only shows when the product has a compare-at price set in Shopify.",
+      "options": [
+        { "value": "badge", "label": "Filled badge (e.g. 63% off)" },
+        { "value": "plain", "label": "Plain text (e.g. 63% OFF)" }
+      ],
+      "default": "badge"
+    }
   ]
 }
 {% endschema %}
