@@ -25,6 +25,10 @@ type Product = {
   variantId: string;
   variantIdNumeric: string;
   price: string;
+  // Shopify's "compare at price". Empty string when the product isn't on sale.
+  // Without this the storefront can never show a discount, since the carousel
+  // derives the percentage from price vs compareAtPrice.
+  compareAtPrice: string;
   currency: string;
   imageUrl: string;
   productUrl: string;
@@ -85,6 +89,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       variantId: variant?.id ?? "",
       variantIdNumeric,
       price: variant?.price ?? node.priceRangeV2?.minVariantPrice?.amount ?? "0",
+      compareAtPrice: variant?.compareAtPrice ?? "",
       currency: node.priceRangeV2?.minVariantPrice?.currencyCode ?? "INR",
       imageUrl:
         node.featuredImage?.url ?? variant?.image?.url ?? "",
@@ -108,6 +113,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const variantIdNum  = formData.get("variantIdNumeric") as string;
   const productTitle  = formData.get("productTitle") as string;
   const price         = formData.get("price") as string;
+  const compareAtPrice = formData.get("compareAtPrice") as string;
   const currency      = formData.get("currency") as string;
   const productImageUrl = formData.get("productImageUrl") as string;
   const productUrl    = formData.get("productUrl") as string;
@@ -171,6 +177,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       productUrl,
       productImageUrl,
       price: price ? parseFloat(price) : null,
+      // Persist the compare-at price too — the carousel derives its discount
+      // percentage from price vs compareAtPrice, so dropping it here meant
+      // uploaded videos could never show a discount.
+      compareAtPrice: compareAtPrice ? parseFloat(compareAtPrice) : null,
       currency: currency || "INR",
     },
   });
@@ -335,6 +345,7 @@ export default function NewVideo() {
           <input type="hidden" name="variantIdNumeric" value={selectedProduct?.variantIdNumeric ?? ""} />
           <input type="hidden" name="productTitle"    value={selectedProduct?.title ?? ""} />
           <input type="hidden" name="price"           value={selectedProduct?.price ?? ""} />
+          <input type="hidden" name="compareAtPrice"  value={selectedProduct?.compareAtPrice ?? ""} />
           <input type="hidden" name="currency"        value={selectedProduct?.currency ?? ""} />
           <input type="hidden" name="productImageUrl" value={selectedProduct?.imageUrl ?? ""} />
           <input type="hidden" name="productUrl"      value={selectedProduct?.productUrl ?? ""} />
