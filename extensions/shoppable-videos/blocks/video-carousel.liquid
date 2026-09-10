@@ -50,6 +50,49 @@
   #nq-sec-{{ block.id }} .nq-feature-caption .nq-feature-link {
     color: {{ nq_handle_color }} !important;
   }
+
+  {%- comment -%}
+    Card title + price typography. Emitted as CSS variables scoped to this
+    section, so two carousels on one page can differ. Applied through
+    ID-prefixed selectors, which outrank the stylesheet defaults on
+    specificity — no !important needed, and the mobile sizes work by
+    re-declaring the variables inside the breakpoint.
+
+    Colour is deliberately applied only to the below-card title. Overlay tiles
+    (nq-ov-title) sit on top of the video in white; forcing a dark title colour
+    there would make them unreadable, so those get font + size only.
+  {%- endcomment -%}
+  {%- assign nq_tf = block.settings.title_font | default: 'Poppins' -%}
+  {%- assign nq_pf = block.settings.price_font | default: 'Poppins' -%}
+  #nq-sec-{{ block.id }} {
+    --nq-title-font: {% if nq_tf == 'inherit' %}inherit{% else %}'{{ nq_tf }}', sans-serif{% endif %};
+    --nq-title-size: {{ block.settings.title_size_desktop | default: 13 }}px;
+    --nq-title-color: {{ block.settings.title_color | default: '#111111' }};
+    --nq-price-font: {% if nq_pf == 'inherit' %}inherit{% else %}'{{ nq_pf }}', sans-serif{% endif %};
+    --nq-price-size: {{ block.settings.price_size_desktop | default: 13 }}px;
+  }
+  @media (max-width: 767px) {
+    #nq-sec-{{ block.id }} {
+      --nq-title-size: {{ block.settings.title_size_mobile | default: 13 }}px;
+      --nq-price-size: {{ block.settings.price_size_mobile | default: 13 }}px;
+    }
+  }
+  #nq-sec-{{ block.id }} .nq-below-title,
+  #nq-sec-{{ block.id }} .nq-card-title {
+    font-family: var(--nq-title-font);
+    font-size: var(--nq-title-size);
+    color: var(--nq-title-color);
+  }
+  #nq-sec-{{ block.id }} .nq-ov-title {
+    font-family: var(--nq-title-font);
+    font-size: var(--nq-title-size);
+  }
+  #nq-sec-{{ block.id }} .nq-below-price,
+  #nq-sec-{{ block.id }} .nq-card-price,
+  #nq-sec-{{ block.id }} .nq-ov-price {
+    font-family: var(--nq-price-font);
+    font-size: var(--nq-price-size);
+  }
 </style>
 
 {%- comment -%} On a product page the whole section is shown on mobile only (nq-pdp-mobile-only). {%- endcomment -%}
@@ -179,6 +222,26 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap">
+
+{%- comment -%}
+  Load the Google font(s) chosen for the card title/price. Poppins is already
+  loaded above, and "inherit" means use the theme's own font, so both are
+  skipped. The de-dupe keeps a single request when title and price match.
+{%- endcomment -%}
+{%- assign nq_font_list = '' -%}
+{%- if nq_tf != 'inherit' and nq_tf != 'Poppins' -%}
+  {%- assign nq_font_list = nq_font_list | append: nq_tf | append: '|' -%}
+{%- endif -%}
+{%- if nq_pf != 'inherit' and nq_pf != 'Poppins' and nq_pf != nq_tf -%}
+  {%- assign nq_font_list = nq_font_list | append: nq_pf | append: '|' -%}
+{%- endif -%}
+{%- assign nq_extra_fonts = nq_font_list | split: '|' -%}
+{%- for nq_f in nq_extra_fonts -%}
+  {%- if nq_f != blank -%}
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family={{ nq_f | replace: ' ', '+' }}:wght@300;400;500;600;700&display=swap">
+  {%- endif -%}
+{%- endfor -%}
+
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css">
 {%- comment -%} Modal styles first, then layout styles (layout wins on the few shared classes) {%- endcomment -%}
 {{ 'shoppable-video.css' | asset_url | stylesheet_tag }}
@@ -251,7 +314,42 @@
     { "type": "text", "id": "instagram_handle", "label": "Instagram handle (clickable)", "default": "@claura.in" },
     { "type": "color", "id": "handle_color", "label": "Instagram handle color", "info": "Applies to this section only, so the product page can differ from the home page.", "default": "#ef748b" },
     { "type": "text", "id": "instagram_url", "label": "Instagram URL", "default": "https://www.instagram.com/claura.in" },
-    { "type": "text", "id": "feature_caption_suffix", "label": "Caption text after handle", "default": "on Instagram" }
+    { "type": "text", "id": "feature_caption_suffix", "label": "Caption text after handle", "default": "on Instagram" },
+    { "type": "header", "content": "Card Title & Price Text" },
+    {
+      "type": "select", "id": "title_font", "label": "Title font",
+      "info": "Theme default uses your store's own font. Others are loaded from Google Fonts.",
+      "options": [
+        { "value": "inherit",          "label": "Theme default" },
+        { "value": "Poppins",          "label": "Poppins" },
+        { "value": "Inter",            "label": "Inter" },
+        { "value": "Montserrat",       "label": "Montserrat" },
+        { "value": "Lato",             "label": "Lato" },
+        { "value": "Roboto",           "label": "Roboto" },
+        { "value": "Open Sans",        "label": "Open Sans" },
+        { "value": "Playfair Display", "label": "Playfair Display" }
+      ],
+      "default": "Poppins"
+    },
+    { "type": "range", "id": "title_size_desktop", "label": "Title size — Desktop (px)", "min": 10, "max": 24, "step": 1, "default": 13 },
+    { "type": "range", "id": "title_size_mobile",  "label": "Title size — Mobile (px)",  "min": 9,  "max": 20, "step": 1, "default": 13 },
+    { "type": "color", "id": "title_color", "label": "Title color", "default": "#111111" },
+    {
+      "type": "select", "id": "price_font", "label": "Price font",
+      "options": [
+        { "value": "inherit",          "label": "Theme default" },
+        { "value": "Poppins",          "label": "Poppins" },
+        { "value": "Inter",            "label": "Inter" },
+        { "value": "Montserrat",       "label": "Montserrat" },
+        { "value": "Lato",             "label": "Lato" },
+        { "value": "Roboto",           "label": "Roboto" },
+        { "value": "Open Sans",        "label": "Open Sans" },
+        { "value": "Playfair Display", "label": "Playfair Display" }
+      ],
+      "default": "Poppins"
+    },
+    { "type": "range", "id": "price_size_desktop", "label": "Price size — Desktop (px)", "min": 10, "max": 24, "step": 1, "default": 13 },
+    { "type": "range", "id": "price_size_mobile",  "label": "Price size — Mobile (px)",  "min": 9,  "max": 20, "step": 1, "default": 13 }
   ]
 }
 {% endschema %}
