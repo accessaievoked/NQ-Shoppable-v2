@@ -761,6 +761,14 @@
     openAt(idx) {
       if (window._nqOpenModal) window._nqOpenModal(this.videos, idx);
       this.trackEvent('VIEW', this.videos[idx] && this.videos[idx].id);
+      // Optimistically update the view counter on the card so shoppers see
+      // the new count immediately without waiting for a page reload.
+      const v = this.videos[idx];
+      if (v) {
+        v.viewCount = (v.viewCount || 0) + 1;
+        this.container.querySelectorAll('.nq-card[data-nq-idx="' + idx + '"] .nq-views')
+          .forEach((el) => { el.innerHTML = '&#128065; ' + v.viewCount; });
+      }
     }
 
     // ── Layout dispatcher (all 14 tile types) ──────────────────────────
@@ -866,6 +874,7 @@
     buildCard(v, i, s) {
       const card = document.createElement('div');
       card.className = 'nq-card nq-tile-' + s.tile;
+      card.dataset.nqIdx = i;
       const thumb = this.vThumb(v);
       // Card plays the tiny preview clip; full video stays for the modal. When a
       // preview exists, the full video is passed as the on-error fallback.
