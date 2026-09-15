@@ -95,26 +95,52 @@
   }
 
   {%- comment -%}
-    Discount style. Default keeps the filled pill badge that every store
-    currently renders. "plain" strips the pill and shows the percentage as
-    accent-coloured uppercase text next to the struck-through price, matching
-    the way most themes present a markdown. Colour deliberately reuses the
-    price colour so the two always agree.
+    Discount + compare-at price styling.
+
+    The accent colour does double duty on purpose, so both styles look right
+    with no merchant setup: in "badge" style it's the pill background (white
+    text on it, exactly as every store renders today), and in "plain" style —
+    where there is no pill — it becomes the text colour. That way switching
+    style never produces invisible text, which a single shared colour would.
   {%- endcomment -%}
-  {%- if block.settings.discount_style == 'plain' -%}
+  {%- assign nq_df         = block.settings.discount_font | default: 'inherit' -%}
+  {%- assign nq_disc_accent = block.settings.discount_accent | default: '#EF748B' -%}
+  #nq-sec-{{ block.id }} {
+    --nq-disc-font: {% if nq_df == 'inherit' %}var(--nq-price-font){% else %}'{{ nq_df }}', sans-serif{% endif %};
+    --nq-disc-size: {{ block.settings.discount_size | default: 12 }}px;
+    --nq-disc-accent: {{ nq_disc_accent }};
+    --nq-compare-color: {{ block.settings.compare_color | default: '#999999' }};
+    --nq-compare-size: {{ block.settings.compare_size | default: 14 }}px;
+  }
+
+  {%- comment -%} Struck-through original price {%- endcomment -%}
+  #nq-sec-{{ block.id }} .nq-orig-price,
+  #nq-sec-{{ block.id }} .nq-card-compare-price {
+    font-family: var(--nq-price-font);
+    font-size: var(--nq-compare-size);
+    color: var(--nq-compare-color);
+  }
+
+  {%- comment -%} The percentage itself {%- endcomment -%}
   #nq-sec-{{ block.id }} .nq-disc-badge,
   #nq-sec-{{ block.id }} .nq-card-discount {
+    font-family: var(--nq-disc-font);
+    font-size: var(--nq-disc-size);
+    font-weight: {{ block.settings.discount_weight | default: 600 }};
+    {%- if block.settings.discount_uppercase %}
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+    {%- endif %}
+    {%- if block.settings.discount_style == 'plain' %}
     background: none;
     padding: 0;
     border-radius: 0;
-    color: {{ nq_price_color }};
-    font-family: var(--nq-price-font);
-    font-size: var(--nq-price-size);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.01em;
+    color: var(--nq-disc-accent);
+    {%- else %}
+    background: var(--nq-disc-accent);
+    color: {{ block.settings.discount_text_color | default: '#ffffff' }};
+    {%- endif %}
   }
-  {%- endif -%}
 </style>
 
 {%- comment -%} On a product page the whole section is shown on mobile only (nq-pdp-mobile-only). {%- endcomment -%}
@@ -257,6 +283,10 @@
 {%- if nq_pf != 'inherit' and nq_pf != 'Poppins' and nq_pf != nq_tf -%}
   {%- assign nq_font_list = nq_font_list | append: nq_pf | append: '|' -%}
 {%- endif -%}
+{%- comment -%} Discount font — "inherit" here means "same as price", already loaded. {%- endcomment -%}
+{%- if nq_df != 'inherit' and nq_df != 'Poppins' and nq_df != nq_tf and nq_df != nq_pf -%}
+  {%- assign nq_font_list = nq_font_list | append: nq_df | append: '|' -%}
+{%- endif -%}
 {%- assign nq_extra_fonts = nq_font_list | split: '|' -%}
 {%- for nq_f in nq_extra_fonts -%}
   {%- if nq_f != blank -%}
@@ -380,7 +410,45 @@
         { "value": "plain", "label": "Plain text (e.g. 63% OFF)" }
       ],
       "default": "badge"
-    }
+    },
+    {
+      "type": "color", "id": "discount_accent", "label": "Discount accent color",
+      "info": "Badge style: the pill background. Plain style: the text colour.",
+      "default": "#EF748B"
+    },
+    {
+      "type": "color", "id": "discount_text_color", "label": "Discount text color",
+      "info": "Text inside the pill. Badge style only.",
+      "default": "#ffffff"
+    },
+    {
+      "type": "select", "id": "discount_font", "label": "Discount font",
+      "options": [
+        { "value": "inherit",          "label": "Same as price" },
+        { "value": "Poppins",          "label": "Poppins" },
+        { "value": "Inter",            "label": "Inter" },
+        { "value": "Montserrat",       "label": "Montserrat" },
+        { "value": "Lato",             "label": "Lato" },
+        { "value": "Roboto",           "label": "Roboto" },
+        { "value": "Open Sans",        "label": "Open Sans" },
+        { "value": "Playfair Display", "label": "Playfair Display" }
+      ],
+      "default": "inherit"
+    },
+    { "type": "range", "id": "discount_size", "label": "Discount size (px)", "min": 8, "max": 20, "step": 1, "default": 12 },
+    {
+      "type": "select", "id": "discount_weight", "label": "Discount weight",
+      "options": [
+        { "value": "400", "label": "Regular" },
+        { "value": "500", "label": "Medium" },
+        { "value": "600", "label": "Semi-bold" },
+        { "value": "700", "label": "Bold" }
+      ],
+      "default": "600"
+    },
+    { "type": "checkbox", "id": "discount_uppercase", "label": "Uppercase discount text", "default": true },
+    { "type": "color", "id": "compare_color", "label": "Original (struck-through) price color", "default": "#999999" },
+    { "type": "range", "id": "compare_size", "label": "Original price size (px)", "min": 8, "max": 22, "step": 1, "default": 14 }
   ]
 }
 {% endschema %}
