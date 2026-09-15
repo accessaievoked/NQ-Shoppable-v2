@@ -29,11 +29,30 @@ async function downloadToTemp(url: string, destPath: string): Promise<void> {
   await fs.writeFile(destPath, buffer);
 }
 
+/** Videos at or under this length are their own card preview — see below. */
+const SHORT_VIDEO_SECONDS = 5;
+
+/**
+ * Reads a video's duration in seconds via ffprobe.
+ *
+ * Returns null rather than throwing: duration is only used as an optimisation
+ * hint, and a probe failure should never cost us the whole encode.
+ */
+function probeDuration(inputPath: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    ffmpeg.ffprobe(inputPath, (err, data) => {
+      if (err) return resolve(null);
+      const secs = data?.format?.duration;
+      resolve(typeof secs === "number" && !Number.isNaN(secs) ? secs : null);
+    });
+  });
+}
+
 /**
  * Extracts a single frame from a video at the given time offset (seconds).
  * Saves it as a WebP to outPath (smaller than JPEG at equivalent quality).
  */
-function extractFrame(inputPath: string, outPath: string, timeOffset = 1): Promise<void> {
+function extractFrameAt(inputPath: string, outPath: string, timeOffset: number): Promise<void> {
   return new Promise((resolve, reject) => {
     ffmpeg(inputPath)
       .seekInput(timeOffset)
@@ -43,6 +62,27 @@ function extractFrame(inputPath: string, outPath: string, timeOffset = 1): Promi
       .on("error", (err) => reject(err))
       .run();
   });
+}
+
+/**
+ * Extracts a thumbnail, falling back to the very first frame.
+ *
+ * A seek past the end of a clip decodes nothing, and ffmpeg then exits non-zero
+ * with "frame= 0 ... Lsize= 0KiB" — which used to fail the entire job over a
+ * thumbnail. Offset 0 always has a frame, so the retry is a reliable backstop
+ * when the duration probe is unavailable or wrong.
+ */
+async function extractFrame(inputPath: string, outPath: string, timeOffset = 1): Promise<void> {
+  try {
+    await extractFrameAt(inputPath, outPath, timeOffset);
+  } catch (err) {
+    if (timeOffset === 0) throw err;
+    console.warn(
+      `[Video] Thumbnail at ${timeOffset}s failed, retrying at first frame:`,
+      (err as Error)?.message ?? err
+    );
+    await extractFrameAt(inputPath, outPath, 0);
+  }
 }
 
 /**
@@ -174,10 +214,25 @@ export async function processVideo(
     await downloadToTemp(mp4Url, inputPath);
     onProgress?.(5);
 
-    // 2. Extract thumbnail & compress to a small MP4 in parallel
-    console.log(`[Video] Extracting thumbnail & compressing to MP4`);
+    // Probe once, up front: the duration decides both where to grab the
+    // thumbnail and whether the card clip is worth encoding at all.
+    const duration = await probeDuration(inputPath);
+
+    // 2. Extract thumbnail & compress to a small MP4 in parallel.
+    //
+    // The seek offset must sit inside the clip. Hard-coding 1s meant a video
+    // shorter than a second had nothing to decode at that point — ffmpeg wrote
+    // no frames and exited non-zero ("frame= 0 ... Lsize= 0KiB"), failing the
+    // whole job over a thumbnail. Grab the midpoint of short clips instead.
+    const thumbOffset =
+      duration !== null && duration < 1.5 ? Math.max(0, duration / 2) : 1;
+
+    console.log(
+      `[Video] Extracting thumbnail at ${thumbOffset.toFixed(2)}s & compressing to MP4` +
+        (duration !== null ? ` (duration ${duration.toFixed(2)}s)` : "")
+    );
     await Promise.all([
-      extractFrame(inputPath, thumbPath, 1),
+      extractFrame(inputPath, thumbPath, thumbOffset),
       compressToMp4(inputPath, compressedPath, onProgress),
     ]);
 
@@ -206,23 +261,37 @@ export async function processVideo(
     // 5. Build & upload the tiny card-preview clip. Best-effort: a failure here
     //    must NOT lose the thumbnail/reel above. The storefront falls back to the
     //    reel when previews/{key}.mp4 is missing, so old videos keep working.
+    //
+    //    Skipped entirely for short videos: the card clip is just the first 3
+    //    seconds, so for anything at or under 5s it's nearly the whole video
+    //    re-encoded to produce a near-identical file. Pointing previewUrl at the
+    //    compressed reel gives the same result and saves a full encode pass —
+    //    the single biggest cost in this pipeline.
     let previewUrl: string | null = null;
-    try {
-      const clipPath   = path.join(tmpDir, "preview.mp4");
-      await makeCardClip(inputPath, clipPath);
-      const clipBuffer = await fs.readFile(clipPath);
-      const previewKey = `previews/${baseKey}.mp4`;
-      await s3.send(new PutObjectCommand({
-        Bucket: R2_BUCKET_NAME,
-        Key: previewKey,
-        Body: clipBuffer,
-        ContentType: "video/mp4",
-        CacheControl: "public, max-age=31536000, immutable",
-      }));
-      previewUrl = `${R2_PUBLIC_URL}/${previewKey}`;
-      console.log(`[Video] Card clip: ${previewUrl} (${Math.round(clipBuffer.length / 1024)} KB)`);
-    } catch (clipErr) {
-      console.warn(`[Video] Card clip failed (storefront will use the reel):`, clipErr);
+
+    if (duration !== null && duration <= SHORT_VIDEO_SECONDS) {
+      previewUrl = `${R2_PUBLIC_URL}/${mp4Key}`;
+      console.log(
+        `[Video] Short video (${duration.toFixed(1)}s) — using the reel as its own card preview, skipping the clip encode`
+      );
+    } else {
+      try {
+        const clipPath   = path.join(tmpDir, "preview.mp4");
+        await makeCardClip(inputPath, clipPath);
+        const clipBuffer = await fs.readFile(clipPath);
+        const previewKey = `previews/${baseKey}.mp4`;
+        await s3.send(new PutObjectCommand({
+          Bucket: R2_BUCKET_NAME,
+          Key: previewKey,
+          Body: clipBuffer,
+          ContentType: "video/mp4",
+          CacheControl: "public, max-age=31536000, immutable",
+        }));
+        previewUrl = `${R2_PUBLIC_URL}/${previewKey}`;
+        console.log(`[Video] Card clip: ${previewUrl} (${Math.round(clipBuffer.length / 1024)} KB)`);
+      } catch (clipErr) {
+        console.warn(`[Video] Card clip failed (storefront will use the reel):`, clipErr);
+      }
     }
 
     const compressedUrl = `${R2_PUBLIC_URL}/${mp4Key}`;

@@ -313,7 +313,14 @@ export default function Index() {
   const isSubmitting = navigation.state === "submitting";
 
   const [search, setSearch] = useState(q);
-  const [playingVideo, setPlayingVideo] = useState<{ streamUrl: string | null; videoUrl: string; title: string } | null>(null);
+  const [playingVideo, setPlayingVideo] = useState<{
+    streamUrl: string | null;
+    videoUrl: string;
+    title: string;
+    // Shown as the poster while the new source loads, so the player fills with
+    // this video's own still rather than sitting blank.
+    thumbnailUrl: string;
+  } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   // ── Reorder state ────────────────────────────────────────────────────────
@@ -357,13 +364,32 @@ export default function Index() {
     reorder(a);
   }
 
-  // Play video whenever modal opens
+  // Play video whenever modal opens.
+  //
+  // Assigning a new `src` does NOT clear the frame already decoded into the
+  // element, so opening a second video briefly showed the last frame of the
+  // first. Tearing the old source down with removeAttribute + load() resets the
+  // element to empty before the new source is attached.
+  //
+  // Cleanup uses removeAttribute rather than `src = ""` — an empty string is
+  // resolved against the document URL, so the browser tries to load the page
+  // itself as a video and logs a media error.
   useEffect(() => {
     if (!playingVideo || !videoRef.current) return;
     const vid = videoRef.current;
+
+    vid.pause();
+    vid.removeAttribute("src");
+    vid.load(); // drops the decoded frame, leaving the element blank
+
     vid.src = playingVideo.videoUrl;
     vid.play().catch(() => {});
-    return () => { vid.pause(); vid.src = ""; };
+
+    return () => {
+      vid.pause();
+      vid.removeAttribute("src");
+      vid.load();
+    };
   }, [playingVideo]);
 
   const tabs: { label: string; value: Filter; count: number }[] = [
@@ -435,7 +461,11 @@ export default function Index() {
           <div style={styles.previewBox} onClick={(e) => e.stopPropagation()}>
             <button style={styles.previewClose} onClick={() => setPlayingVideo(null)}>✕</button>
             <video
+              // Keyed on the URL so switching videos mounts a fresh element
+              // rather than reusing one that still holds the previous frame.
+              key={playingVideo.videoUrl}
               ref={videoRef}
+              poster={playingVideo.thumbnailUrl || undefined}
               style={styles.previewVideo}
               controls
               playsInline
@@ -531,7 +561,12 @@ export default function Index() {
                   {/* Thumbnail */}
                   <div
                     style={{ ...styles.thumbWrap, cursor: "pointer" }}
-                    onClick={() => setPlayingVideo({ streamUrl: video.streamUrl ?? null, videoUrl: video.videoUrl, title: video.title })}
+                    onClick={() => setPlayingVideo({
+                      streamUrl: video.streamUrl ?? null,
+                      videoUrl: video.videoUrl,
+                      title: video.title,
+                      thumbnailUrl: video.thumbnailUrl,
+                    })}
                   >
                     {video.thumbnailUrl
                       ? <img src={video.thumbnailUrl} alt={video.title} style={styles.thumbImg} />

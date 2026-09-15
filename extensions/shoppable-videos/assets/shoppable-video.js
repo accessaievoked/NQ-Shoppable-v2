@@ -6,6 +6,16 @@
 (function () {
   'use strict';
 
+  // ─── Run-once guard ─────────────────────────────────────────────────
+  // This file is included by the block liquid, so it is injected once per
+  // Shoppable Videos section. A page with two sections executes it twice,
+  // creating a second, independent copy of all the state below — including a
+  // SECOND Swiper bound to the same #nq-video-swiper and a second set of arrow
+  // listeners. Both then react to every click, so the modal skips a slide
+  // (open the 5th, press prev, land on the 3rd). One execution per page.
+  if (window.__NQ_SHOPPABLE_LOADED__) return;
+  window.__NQ_SHOPPABLE_LOADED__ = true;
+
   // ─── Modal singleton state ──────────────────────────────────────────
   let modalVideos = [];
   let modalIndex = 0;
@@ -103,21 +113,34 @@
   // While the modal is open the carousel is hidden behind it, but its videos
   // keep playing/buffering and compete for the browser's limited connections
   // to the video host. Pause them on open, resume the visible ones on close.
+  // Card videos exist in two flavours: the original .nq-inline-video and the
+  // persistent .nq-hover-video created by the in-view player. Both have to be
+  // matched — when only .nq-inline-video was selected this matched nothing, so
+  // every card kept playing behind the open modal, competing for bandwidth and
+  // (on mobile, where simultaneous video decoders are very limited) starving
+  // the modal video so it never rendered.
+  const NQ_CARD_VIDEO_SEL =
+    '.nq-shoppable-carousel .nq-inline-video, .nq-shoppable-carousel .nq-hover-video';
+
   function pauseCarouselVideos() {
-    document.querySelectorAll('.nq-shoppable-carousel .nq-inline-video').forEach((v) => {
+    document.querySelectorAll(NQ_CARD_VIDEO_SEL).forEach((v) => {
       try { v.pause(); } catch (e) {}
     });
   }
 
   function resumeCarouselVideos() {
     const vh = window.innerHeight || 800;
-    document.querySelectorAll('.nq-shoppable-carousel .nq-inline-video').forEach((v) => {
+    document.querySelectorAll(NQ_CARD_VIDEO_SEL).forEach((v) => {
       const r = v.getBoundingClientRect();
       const visible = r.width > 0 && r.bottom > 0 && r.top < vh;
-      // Only resume cards that were actually playing and are still on screen.
-      if (visible && (v.getAttribute('src') || v.src) && v.classList.contains('nq-playing')) {
-        v.play().catch(() => {});
-      }
+      if (!visible) return;
+      if (!(v.getAttribute('src') || v.src)) return;
+      // Legacy inline videos fade in via .nq-playing, so that class marks "was
+      // actually playing". The persistent card videos never carry it, so
+      // requiring it would leave them paused forever after the modal closes.
+      if (v.classList.contains('nq-inline-video') && !v.classList.contains('nq-playing')) return;
+      const p = v.play();
+      if (p && p.catch) p.catch(() => {});
     });
   }
 
@@ -295,6 +318,23 @@
       const video = freePoolVideo();
       if (!video) return;
       video.classList.remove('nq-playing');
+
+      // Blank the recycled element before attaching a new source.
+      //
+      // A <video> keeps showing its last decoded frame until the next source
+      // paints, and this element sits BEHIND the thumbnail. On open the
+      // thumbnail has no src yet, so the stale frame is what's actually on
+      // screen — opening reel 2 showed reel 3, because reel 3 had been
+      // preloaded into this element as a neighbour on a previous open.
+      // Verified on a live store: Swiper's activeIndex/translate were correct
+      // and constant throughout, so the wrong picture was always the content
+      // of the right slide. Assigning .src alone does not clear it; load() does.
+      try {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+      } catch (e) {}
+
       slide.insertBefore(video, slide.firstChild); // sits behind thumb/overlay
       const src   = v.streamUrl || v.videoUrl;
       const isHls  = !!(v.streamUrl);
@@ -437,9 +477,17 @@
       // The actual <video> elements come from a small reusable pool and are
       // mounted into the active slide + neighbours by manageSlides(). This keeps
       // the media-player count tiny regardless of how many videos exist.
-      swiperWrapper.innerHTML = videos.map((v) => `
+      swiperWrapper.innerHTML = videos.map((v, i) => `
         <div class="swiper-slide nq-video-slide">
-          ${v.thumbnailUrl ? `<img class="nq-slide-thumb" data-src="${v.thumbnailUrl}" alt="" decoding="async">` : ''}
+          ${v.thumbnailUrl ? `<img class="nq-slide-thumb"${
+            // The slide being opened gets a real src immediately; every other
+            // slide stays lazy behind data-src. The carousel has already shown
+            // this thumbnail, so it's in cache and paints on the first frame —
+            // closing the gap where the <video> behind it was visible. Loading
+            // all of them eagerly is what the lazy scheme exists to avoid, so
+            // only the active one is promoted.
+            i === index ? ` src="${v.thumbnailUrl}"` : ''
+          } data-src="${v.thumbnailUrl}" alt="" decoding="async">` : ''}
           <div class="nq-video-loading"><div class="nq-spinner"></div></div>
           <button class="nq-play-overlay" aria-label="Play video" tabindex="-1">
             <svg width="30" height="30" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>
@@ -449,9 +497,30 @@
 
       buildPool(); // create the reusable <video> elements once
 
+      // Hide the track until Swiper has actually laid the slides out.
+      //
+      // Measured on a live store: for ~650ms after opening, the slide that was
+      // clicked has a bounding box of 0x0 while ANOTHER slide's <video> fills
+      // the panel — elementFromPoint at the panel centre returned the wrong
+      // reel's video element the whole time. Swiper is loaded from a CDN and
+      // constructed asynchronously, so until it runs the wrapper is an
+      // unpositioned block and the first slide covers the panel. manageSlides
+      // has already mounted a playing video into it as a neighbour, so what you
+      // see is a different reel playing.
+      //
+      // visibility (not display) keeps the element in layout, so Swiper still
+      // measures real geometry while it's hidden.
+      const swiperEl = document.getElementById('nq-video-swiper');
+      if (swiperEl) swiperEl.style.visibility = 'hidden';
+
       // Init Swiper (loads from CDN on first open)
       loadSwiper().then((Swiper) => {
-        if (!Swiper) return;
+        if (!Swiper) {
+          // CDN unreachable — show the slides unpositioned rather than leaving
+          // the modal permanently blank.
+          if (swiperEl) swiperEl.style.visibility = '';
+          return;
+        }
         // Construct WITHOUT event handlers first, then assign swiperInstance.
         // With a non-zero initialSlide, Swiper fires slideChange DURING
         // construction; if the handler ran then it would reference an
@@ -482,6 +551,24 @@
 
         updateUI(index);
         manageSlides(index);
+
+        // Reveal only once the clicked slide actually occupies the panel.
+        // Width going 0 -> non-zero is exactly the transition measured above,
+        // so it's the honest signal that Swiper has finished laying out. The
+        // frame cap stops this hiding the modal forever if layout never
+        // settles for some reason.
+        let frames = 0;
+        const revealWhenSized = () => {
+          const s = swiperWrapper.children[index];
+          const sized = s && s.getBoundingClientRect().width > 0;
+          if (sized || ++frames > 90) {
+            if (swiperEl) swiperEl.style.visibility = '';
+          } else {
+            requestAnimationFrame(revealWhenSized);
+          }
+        };
+        requestAnimationFrame(revealWhenSized);
+
         showSwipeHint(videos.length); // mobile "swipe up for next" cue
       });
     }
@@ -494,6 +581,10 @@
       releaseAllSlots();
       if (swiperInstance) { swiperInstance.destroy(true, true); swiperInstance = null; }
       swiperWrapper.innerHTML = '';
+      // Closing before Swiper finished initialising would otherwise leave the
+      // track hidden for the next open.
+      const swEl = document.getElementById('nq-video-swiper');
+      if (swEl) swEl.style.visibility = '';
 
       // Resume the carousel now that the modal's videos are idle.
       resumeCarouselVideos();
@@ -1287,6 +1378,14 @@
 
   // ─── Boot ─────────────────────────────────────────────────────────────
   function boot() {
+    // The modal markup also lives in the block, so a second section leaves a
+    // duplicate #nq-modal in the DOM. Duplicate IDs are invalid and the extra
+    // copy is dead weight that getElementById never returns — drop it.
+    const modals = document.querySelectorAll('#nq-modal');
+    for (let i = 1; i < modals.length; i++) {
+      if (modals[i].parentNode) modals[i].parentNode.removeChild(modals[i]);
+    }
+
     document.querySelectorAll('.nq-shoppable-carousel').forEach((el) => {
       if (!el.dataset.nqInit) {
         el.dataset.nqInit = '1';
