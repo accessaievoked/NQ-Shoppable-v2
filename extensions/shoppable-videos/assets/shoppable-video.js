@@ -85,6 +85,39 @@
     }
   }
 
+  // How many cards are likely to be on screen the moment the carousel appears —
+  // their thumbnails are fetched eagerly instead of lazily.
+  const EAGER_THUMBS = 6;
+
+  // ─── Card poster ────────────────────────────────────────────────────
+  // thumbnailUrl is supposed to be the .webp the pipeline renders, but some rows
+  // hold an .mp4 under thumbnails/. A video file can never decode in an <img> or
+  // as a poster=, so those cards sat on the card background — black — forever.
+  // Fall back to the product image, which is always a real image.
+  function nqPosterUrl(v) {
+    const t = (v && v.thumbnailUrl) || '';
+    if (/\.(mp4|m4v|mov|webm|m3u8)(\?|#|$)/i.test(t)) return (v && v.productImageUrl) || '';
+    return t;
+  }
+
+  // Thumbnails live on a different origin (R2), so the first one otherwise pays
+  // a full DNS + TLS handshake before a single byte arrives. Warm it as soon as
+  // we know the host, which is before any card has been built.
+  let nqPreconnected = false;
+  function nqPreconnect(url) {
+    if (nqPreconnected || !url) return;
+    try {
+      const origin = new URL(url, location.href).origin;
+      if (origin === location.origin) return;
+      const link = document.createElement('link');
+      link.rel = 'preconnect';
+      link.href = origin;
+      link.crossOrigin = '';
+      document.head.appendChild(link);
+      nqPreconnected = true;
+    } catch (e) {}
+  }
+
   // ─── Live prices from the storefront ────────────────────────────────
   // price / compareAtPrice on a video row are SNAPSHOTS, taken when the product
   // was attached in the admin. They drift the moment a merchant edits a price or
@@ -459,10 +492,10 @@
       const prevV = modalVideos[index - 1];
       const nextV = modalVideos[index + 1];
       if (peekPrev)    peekPrev.dataset.hidden    = prevV ? 'false' : 'true';
-      if (peekPrevImg && prevV) { peekPrevImg.src = prevV.thumbnailUrl || ''; peekPrevImg.alt = prevV.productTitle || ''; }
+      if (peekPrevImg && prevV) { peekPrevImg.src = nqPosterUrl(prevV); peekPrevImg.alt = prevV.productTitle || ''; }
       if (arrowPrev)   arrowPrev.dataset.hidden   = prevV ? 'false' : 'true';
       if (peekNext)    peekNext.dataset.hidden    = nextV ? 'false' : 'true';
-      if (peekNextImg && nextV) { peekNextImg.src = nextV.thumbnailUrl || ''; peekNextImg.alt = nextV.productTitle || ''; }
+      if (peekNextImg && nextV) { peekNextImg.src = nqPosterUrl(nextV); peekNextImg.alt = nextV.productTitle || ''; }
       if (arrowNext)   arrowNext.dataset.hidden   = nextV ? 'false' : 'true';
 
       const card = document.getElementById('nq-product-card');
@@ -527,15 +560,15 @@
       // the media-player count tiny regardless of how many videos exist.
       swiperWrapper.innerHTML = videos.map((v, i) => `
         <div class="swiper-slide nq-video-slide">
-          ${v.thumbnailUrl ? `<img class="nq-slide-thumb"${
+          ${nqPosterUrl(v) ? `<img class="nq-slide-thumb"${
             // The slide being opened gets a real src immediately; every other
             // slide stays lazy behind data-src. The carousel has already shown
             // this thumbnail, so it's in cache and paints on the first frame —
             // closing the gap where the <video> behind it was visible. Loading
             // all of them eagerly is what the lazy scheme exists to avoid, so
             // only the active one is promoted.
-            i === index ? ` src="${v.thumbnailUrl}"` : ''
-          } data-src="${v.thumbnailUrl}" alt="" decoding="async">` : ''}
+            i === index ? ` src="${nqPosterUrl(v)}"` : ''
+          } data-src="${nqPosterUrl(v)}" alt="" decoding="async">` : ''}
           <div class="nq-video-loading"><div class="nq-spinner"></div></div>
           <button class="nq-play-overlay" aria-label="Play video" tabindex="-1">
             <svg width="30" height="30" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>
@@ -884,6 +917,9 @@
         if (!res.ok) throw new Error('Failed to fetch videos');
         const data = await res.json();
         this.videos = data.videos || [];
+        // Warm the media origin before the first thumbnail is requested.
+        const first = this.videos[0];
+        if (first) nqPreconnect(nqPosterUrl(first) || first.videoUrl);
       } catch (err) {
         console.warn('[NQ Shoppable Videos] Could not load videos:', err.message);
         this.videos = [];
@@ -910,7 +946,7 @@
     // Previews are plain MP4, so they're never HLS.
     vPreview(v)      { return v.previewUrl || this.vMedia(v); }
     vPreviewIsHls(v) { return v.previewUrl ? false : this.vIsHls(v); }
-    vThumb(v)   { return v.thumbnailUrl || ''; }
+    vThumb(v)   { return nqPosterUrl(v); }
     vTitle(v)   { return v.productTitle || v.title || ''; }
     vImage(v)   { return v.productImageUrl || ''; }
     vViews(v)   { return v.viewCount || 0; }
@@ -1011,6 +1047,9 @@
       const ensureEl = () => {
         if (vid) return;
         vid = document.createElement('video');
+        // Starts transparent (see .nq-hover-video) and is revealed only once a
+        // real frame exists. It sits ON TOP of the thumbnail, so revealing it
+        // any earlier is what covered the card with an empty black box.
         vid.className = 'nq-video-el nq-hover-video';
         vid.muted = true; vid.loop = true; vid.playsInline = true; vid.preload = 'auto';
         // iOS/Android autoplay an inline muted video only when these are present
@@ -1022,6 +1061,9 @@
         // First play() can fire before data is ready on mobile — retry when ready.
         vid.addEventListener('loadeddata', tryPlay);
         vid.addEventListener('canplay', tryPlay);
+        const reveal = () => vid.classList.add('nq-playing');
+        vid.addEventListener('loadeddata', reveal);
+        vid.addEventListener('playing', reveal);
         const firstImg = card.querySelector('img');
         // Poster = thumbnail, so the card shows the thumb before the clip has a
         // frame and again after its source is released on scroll-away.
@@ -1055,6 +1097,9 @@
         if (!loaded) return;
         loaded = false;
         if (vid) {
+          // Hide it again before the source goes: with no source there is no
+          // frame to paint, and the thumbnail underneath should show through.
+          vid.classList.remove('nq-playing');
           const hls = cardHlsMap.get(vid);
           if (hls) { try { hls.destroy(); } catch (x) {} cardHlsMap.delete(vid); }
           try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (x) {}
@@ -1087,7 +1132,14 @@
       const fallbackIsHls = this.vIsHls(v);
       const img = document.createElement('img');
       img.className = 'nq-video-el';
-      img.loading = 'lazy'; img.decoding = 'async';
+      // The cards in the first screenful are what a shopper sees the instant the
+      // carousel scrolls in. Lazy-loading those is what left them on the card
+      // background for half a second, so fetch them straight away; the rest stay
+      // lazy so a long carousel still doesn't pull every thumbnail at once.
+      const eagerThumb = i < EAGER_THUMBS;
+      img.loading = eagerThumb ? 'eager' : 'lazy';
+      if (eagerThumb) img.fetchPriority = 'high';
+      img.decoding = 'async';
       img.alt = this.vTitle(v);
       if (thumb) img.src = thumb;
       card.appendChild(img);

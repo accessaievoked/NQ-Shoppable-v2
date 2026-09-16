@@ -210,12 +210,21 @@
   overflow: hidden;
   cursor: pointer;
   scroll-snap-align: start;
-  background: #111;
+  /* Shown only while the thumbnail is still loading. A near-black card read as
+     a broken tile; a light neutral reads as "loading", like the theme's own
+     placeholders. object-fit:cover means it's invisible once media paints. */
+  background: #f1f1f1;
   transition: transform 0.22s ease;
 }
 .nq-card:hover { transform: scale(1.025); }
 
 .nq-video-el { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: inherit; }
+
+/* The card clip is layered ON TOP of the thumbnail, so it stays transparent
+   until it actually has a frame to show (JS adds .nq-playing on loadeddata).
+   Without this an empty <video> covered the thumbnail with a black box. */
+.nq-hover-video { opacity: 0; transition: opacity 0.25s ease; }
+.nq-hover-video.nq-playing { opacity: 1; }
 
 .nq-views {
   position: absolute;
