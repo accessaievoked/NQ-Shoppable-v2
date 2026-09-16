@@ -56,6 +56,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             priceRangeV2 {
               minVariantPrice { amount currencyCode }
             }
+            # Fallback for products whose sale price sits on a later variant —
+            # variants(first: 1) alone then reads as "not on sale".
+            compareAtPriceRange {
+              maxVariantCompareAtPrice { amount }
+            }
             variants(first: 1) {
               edges {
                 node {
@@ -83,13 +88,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const variantIdNumeric = variant?.id?.split("/").pop() ?? "";
     const shopDomain = new URL(request.url).hostname;
 
+    const price = variant?.price ?? node.priceRangeV2?.minVariantPrice?.amount ?? "0";
+    // Compare-at from the variant, else the product's highest. Shopify keeps the
+    // field filled after a sale ends, so only a value ABOVE price is a discount;
+    // anything else must stay empty or the card renders a "0% off".
+    const compareRaw =
+      variant?.compareAtPrice ?? node.compareAtPriceRange?.maxVariantCompareAtPrice?.amount ?? "";
+    const compareAtPrice =
+      compareRaw && parseFloat(compareRaw) > parseFloat(price) ? String(compareRaw) : "";
+
     return {
       id: node.id,
       title: node.title,
       variantId: variant?.id ?? "",
       variantIdNumeric,
-      price: variant?.price ?? node.priceRangeV2?.minVariantPrice?.amount ?? "0",
-      compareAtPrice: variant?.compareAtPrice ?? "",
+      price,
+      compareAtPrice,
       currency: node.priceRangeV2?.minVariantPrice?.currencyCode ?? "INR",
       imageUrl:
         node.featuredImage?.url ?? variant?.image?.url ?? "",

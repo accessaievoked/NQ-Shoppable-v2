@@ -414,6 +414,17 @@ export default function Index() {
 
       const product = selected[0];
       const variant = product.variants[0];
+      // The first variant can be missing the compare-at even when the product is
+      // on sale (sale set per size), so fall back to the first variant that has
+      // one — and keep it only if it's actually above the price.
+      const compareRaw =
+        variant?.compareAtPrice ??
+        product.variants.find((x: any) => x.compareAtPrice)?.compareAtPrice ??
+        "";
+      const compareAt =
+        compareRaw && parseFloat(compareRaw) > parseFloat(variant?.price ?? "0")
+          ? String(compareRaw)
+          : "";
 
       const fd = new FormData();
       fd.set("intent",          "attach");
@@ -422,7 +433,7 @@ export default function Index() {
       fd.set("productTitle",    product.title);
       fd.set("productImageUrl", product.images?.[0]?.originalSrc ?? "");
       fd.set("price",           String(variant.price ?? ""));
-      fd.set("compareAtPrice",  String(variant.compareAtPrice ?? ""));
+      fd.set("compareAtPrice",  compareAt);
       fd.set("currency",        "INR");
       fd.set("productUrl",      `/products/${product.handle}`);
       submit(fd, { method: "post" });

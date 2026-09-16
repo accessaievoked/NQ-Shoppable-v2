@@ -85,6 +85,54 @@
     }
   }
 
+  // ─── Live prices from the storefront ────────────────────────────────
+  // price / compareAtPrice on a video row are SNAPSHOTS, taken when the product
+  // was attached in the admin. They drift the moment a merchant edits a price or
+  // starts a sale, and rows saved before compareAtPrice existed have it as null
+  // — which is why some cards showed a bare price while the very same product
+  // was discounted on its product page. So a card asks the storefront for the
+  // live numbers (/products/<handle>.js — the same data the theme itself uses,
+  // CDN-cached and cheap) and falls back to the snapshot only if that fails.
+  const productJsonCache = new Map(); // handle → Promise<product json | null>
+
+  function nqHandleOf(url) {
+    const m = String(url || '').match(/\/products\/([^/?#]+)/);
+    return m ? m[1] : '';
+  }
+
+  function nqFetchProductJson(handle) {
+    if (productJsonCache.has(handle)) return productJsonCache.get(handle);
+    // Shopify.routes.root keeps any market/locale prefix (e.g. "/en-in/") intact.
+    const root = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || '/';
+    const req = fetch(root + 'products/' + encodeURIComponent(handle) + '.js', { headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+    productJsonCache.set(handle, req);
+    return req;
+  }
+
+  // Copy the live price + compare-at onto a video object. Returns true when
+  // something actually changed, so only those cards get repainted.
+  function nqApplyLivePrice(v, prod) {
+    if (!prod || !Array.isArray(prod.variants) || !prod.variants.length) return false;
+    const digits = (x) => String(x || '').replace(/\D/g, '');
+    const want = digits(v.variantId);
+    // The pinned variant when it still exists, else whatever a shopper lands on.
+    const variant = (want && prod.variants.find((x) => digits(x.id) === want)) ||
+      prod.variants.find((x) => x.available) || prod.variants[0];
+    // Storefront JSON is in minor units (paise); our fields are in rupees.
+    const price = variant.price != null ? variant.price / 100 : null;
+    let compare = variant.compare_at_price != null ? variant.compare_at_price / 100 : null;
+    // Shopify keeps compare_at_price around after a sale ends, so only a HIGHER
+    // number is a real discount — anything else must not render a "0% off".
+    if (compare != null && price != null && compare <= price) compare = null;
+    const changed = v.price !== price || v.compareAtPrice !== compare;
+    if (price != null) v.price = price;
+    v.compareAtPrice = compare;
+    if (!v.currency && window.Shopify && window.Shopify.currency) v.currency = window.Shopify.currency.active;
+    return changed;
+  }
+
   // ─── Attach HLS or MP4 to a video element ───────────────────────────
   function attachStream(videoEl, src, isHls, onReady) {
     if (isHls && videoEl.canPlayType('application/vnd.apple.mpegurl')) {
@@ -676,6 +724,10 @@
     }
 
     window._nqOpenModal = openModal;
+    // Let a carousel repaint the open modal's product card once live prices land.
+    window._nqRefreshModal = () => {
+      if (modal && modal.style.display === 'flex') updateUI(modalIndex);
+    };
   }
 
   // ─── Carousel class ─────────────────────────────────────────────────
@@ -699,6 +751,9 @@
       // for the chosen tile_type and wires memory-safe inline video + click→modal
       // itself, so the old default-only helpers are no longer called here.
       this.renderLayout();
+      // Prices are painted from the snapshot first, then corrected from the
+      // storefront. Deliberately not awaited: nothing should wait on it.
+      this.hydratePrices();
     }
 
     // On a PDP the block carries data-product-id (the storefront product id).
@@ -863,6 +918,50 @@
     vCompare(v) { return v.compareAtPrice != null ? formatPrice(v.compareAtPrice, v.currency) : ''; }
     vDiscount(v){ return (v.compareAtPrice && v.price) ? Math.round((1 - v.price / v.compareAtPrice) * 100) : 0; }
 
+    // The price line under a card: price, struck-through compare price and the
+    // % off. Shared by every tile and by the live-price repaint so a discount
+    // always renders the same way.
+    priceMarkup(v) {
+      const price = this.vPrice(v), compare = this.vCompare(v), disc = this.vDiscount(v);
+      if (compare && disc > 0) {
+        return price + ' <span class="nq-orig-price">' + compare + '</span>' +
+               '<span class="nq-disc-badge">' + disc + '% off</span>';
+      }
+      return price;
+    }
+
+    // Correct every card's price from the storefront after the first paint.
+    async hydratePrices() {
+      const jobs = this.videos
+        .map((v, i) => ({ v, i, handle: nqHandleOf(v.productUrl) }))
+        .filter((j) => j.handle);
+      if (!jobs.length) return;
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < jobs.length) {
+          const job = jobs[cursor++];
+          const prod = await nqFetchProductJson(job.handle);
+          if (nqApplyLivePrice(job.v, prod)) this.repaintPrice(job.i, job.v);
+        }
+      };
+      // A few at a time — fast enough to land before a shopper reads the row,
+      // light enough not to compete with the video clips for the connection.
+      await Promise.all(Array.from({ length: Math.min(4, jobs.length) }, worker));
+      if (window._nqRefreshModal) window._nqRefreshModal();
+    }
+
+    // Rewrite just the price node of one card, whichever tile type it is.
+    repaintPrice(i, v) {
+      const card = this.container.querySelector('.nq-card[data-nq-idx="' + i + '"]');
+      if (!card) return;
+      const below = card.querySelector('.nq-below-price');
+      if (below) below.innerHTML = this.priceMarkup(v);
+      const ov = card.querySelector('.nq-ov-price');
+      if (ov) ov.textContent = this.vPrice(v);
+      const pill = card.querySelector('.nq-pill-price');
+      if (pill) pill.textContent = this.vPrice(v);
+    }
+
     openAt(idx) {
       if (window._nqOpenModal) window._nqOpenModal(this.videos, idx);
       this.trackEvent('VIEW', this.videos[idx] && this.videos[idx].id);
@@ -1007,8 +1106,7 @@
     // Per-tile sizing + product overlays (V2 fields).
     applyTile(card, v, s) {
       const cardW = s.cardW, cardH = s.cardH, t = s.tile;
-      const img = this.vImage(v), title = this.vTitle(v), price = this.vPrice(v),
-            compare = this.vCompare(v), disc = this.vDiscount(v);
+      const img = this.vImage(v), title = this.vTitle(v), price = this.vPrice(v);
       const ovTransparent = () => {
         const ov = document.createElement('div'); ov.className = 'nq-ov-transparent';
         ov.innerHTML = (img ? '<img src="' + img + '" class="nq-ov-thumb">' : '') + '<span class="nq-ov-title">' + title + '</span>';
@@ -1031,10 +1129,8 @@
         case 'product_below_3':
         case 'product_below_2': {
           card.style.cssText += 'width:' + cardW + 'px;height:' + cardH + 'px;overflow:visible;';
-          let dh = '';
-          if (compare && disc > 0) dh = '<span class="nq-orig-price">' + compare + '</span><span class="nq-disc-badge">' + disc + '% off</span>';
           const info = document.createElement('div'); info.className = 'nq-below-info';
-          info.innerHTML = '<p class="nq-below-title">' + title + '</p><p class="nq-below-price">' + price + ' ' + dh + '</p>';
+          info.innerHTML = '<p class="nq-below-title">' + title + '</p><p class="nq-below-price">' + this.priceMarkup(v) + '</p>';
           card.appendChild(info); break;
         }
         case 'story_format':
@@ -1045,9 +1141,8 @@
           // Match the product_below tiles: struck-through compare price AND the
           // discount. This tile previously showed the compare price but dropped
           // the percentage, so the same product read differently per tile type.
-          let pr = price; if (compare && disc > 0) pr += ' <span class="nq-orig-price">' + compare + '</span><span class="nq-disc-badge">' + disc + '% off</span>';
           const info = document.createElement('div'); info.className = 'nq-below-info';
-          info.innerHTML = '<p class="nq-below-title">' + title + '</p><p class="nq-below-price">' + pr + '</p>';
+          info.innerHTML = '<p class="nq-below-title">' + title + '</p><p class="nq-below-price">' + this.priceMarkup(v) + '</p>';
           card.appendChild(info); break;
         }
         case 'grid_theme_border': card.style.border = '3px solid ' + s.shopBtn; break;
