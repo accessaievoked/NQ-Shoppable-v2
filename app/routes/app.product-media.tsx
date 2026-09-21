@@ -21,7 +21,6 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import {
   pushVideoToProduct,
-  autoAddMissingVideos,
   syncPendingProductMedia,
   getProductGallery,
   getProductGalleries,
@@ -44,14 +43,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  // Push anything tagged to a product that hasn't been sent yet — videos from
-  // before this feature existed, or whose upload-time auto-add didn't run.
-  // Bounded per load so one visit can't kick off dozens of uploads.
-  try {
-    await autoAddMissingVideos(admin, shop, 5);
-  } catch (err) {
-    console.error("[ProductMedia] auto-add on load failed:", err);
-  }
+  // NOTE: the automatic backfill (autoAddMissingVideos) is deliberately NOT
+  // called here any more.
+  //
+  // Pushing every tagged video into Shopify on page load is what exhausted the
+  // store-wide video allowance (250 on Basic) — the cap counts Shopify-hosted
+  // videos across the WHOLE store, so a large library fills it regardless of
+  // how many videos any one product has. Once full, every further push fails
+  // and the screen fills with red "Failed" cards.
+  //
+  // Native-gallery placement is now opt-in: the merchant pushes the specific
+  // videos worth a slot via the "Add another media" button (intent: "sync").
+  // Everything else still plays on the product page through our own storefront
+  // block, which reads from R2 and has no Shopify limit at all.
+  //
+  // autoAddMissingVideos is kept exported for a future explicit "backfill all"
+  // action; it must not run unattended.
 
   // Advance any in-flight imports before rendering. Transcoding usually
   // finishes in seconds, so doing it on page load avoids needing a scheduler.

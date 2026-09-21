@@ -1,8 +1,13 @@
 /* ─── NQ Shoppable Videos ─────────────────────────────────────────── */
 
-/* On product pages the block is shown on mobile only — hidden on desktop. */
+/* Product-page visibility. Which class the section gets is driven by the
+   "Show on product pages" setting; default stays mobile-only, matching how
+   this behaved before the setting existed. */
 @media (min-width: 768px) {
   .nq-pdp-mobile-only { display: none !important; }
+}
+@media (max-width: 767px) {
+  .nq-pdp-desktop-only { display: none !important; }
 }
 
 /* Section heading — matched to claura.in (Poppins, pink) */
