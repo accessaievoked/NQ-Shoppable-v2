@@ -16,7 +16,6 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { uploadToR2, deleteFromR2ByUrl } from "../r2.server";
 import { processVideo } from "../ffmpeg.server";
-import { pushVideoToProduct, syncPendingProductMedia } from "../shopifyMedia.server";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Product = {
@@ -118,7 +117,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   // `admin` is needed after the response returns, for the auto-add to the
   // product page — it holds the shop's offline token, so it stays usable.
-  const { session, admin } = await authenticate.admin(request);
+  // `admin` is no longer destructured here: the Shopify product-media push used
+  // to run from this action, and is now opt-in from the Product pages screen.
+  const { session } = await authenticate.admin(request);
 
   const formData = await request.formData();
   const title         = (formData.get("title") as string)?.trim();
@@ -236,31 +237,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       console.log(`[Video] Background processing complete for video ${video.id}`);
 
-      // Auto-add to the tagged product's page. Uploading a video against a
-      // product almost always means you want it visible there, so the manual
-      // "Add media" step is skipped. Runs here rather than at save time because
-      // Shopify needs the finished, compressed file — at save time videoUrl is
-      // still the raw upload, which gets deleted a few lines above.
-      if (productId) {
-        try {
-          const ready = await db.video.findUnique({ where: { id: video.id } });
-          if (ready?.videoUrl) {
-            const push = await pushVideoToProduct(admin, session.shop, ready, productId);
-            if (push.ok) {
-              // Attach it once Shopify finishes transcoding.
-              await syncPendingProductMedia(admin, session.shop);
-              console.log(`[Video] Added video ${video.id} to product page`);
-            } else {
-              // Most likely the store's plan video allowance. Not fatal — the
-              // video still works in the storefront carousel, and the reason is
-              // shown on the Product pages screen.
-              console.warn(`[Video] Could not add ${video.id} to product page: ${push.error}`);
-            }
-          }
-        } catch (pushErr) {
-          console.error(`[Video] Auto-add to product page failed for ${video.id}:`, pushErr);
-        }
-      }
+      // NOTE: uploading no longer auto-pushes the video into Shopify's product
+      // media gallery.
+      //
+      // Shopify caps hosted videos per plan, counted across the WHOLE store
+      // (250 on Basic). Pushing on every upload meant a growing library filled
+      // that cap on its own, after which each new upload failed and left a red
+      // "Failed" card on the Product pages screen — for a video that was
+      // working perfectly well on the storefront.
+      //
+      // Native-gallery placement is now a deliberate choice: the merchant picks
+      // the videos worth a slot from the Product pages screen. Every video still
+      // appears on the product page via our storefront block, which reads from
+      // R2 and has no Shopify limit ("Show On Product Pages" in the block's
+      // theme settings).
     })
     .catch(async (err) => {
       console.error(`[Video] Background processing failed for video ${video.id}:`, err);
