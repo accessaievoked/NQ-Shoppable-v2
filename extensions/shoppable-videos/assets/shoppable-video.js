@@ -85,6 +85,87 @@
     }
   }
 
+  // How many cards are likely to be on screen the moment the carousel appears —
+  // their thumbnails are fetched eagerly instead of lazily.
+  const EAGER_THUMBS = 6;
+
+  // ─── Card poster ────────────────────────────────────────────────────
+  // thumbnailUrl is supposed to be the .webp the pipeline renders, but some rows
+  // hold an .mp4 under thumbnails/. A video file can never decode in an <img> or
+  // as a poster=, so those cards sat on the card background — black — forever.
+  // Fall back to the product image, which is always a real image.
+  function nqPosterUrl(v) {
+    const t = (v && v.thumbnailUrl) || '';
+    if (/\.(mp4|m4v|mov|webm|m3u8)(\?|#|$)/i.test(t)) return (v && v.productImageUrl) || '';
+    return t;
+  }
+
+  // Thumbnails live on a different origin (R2), so the first one otherwise pays
+  // a full DNS + TLS handshake before a single byte arrives. Warm it as soon as
+  // we know the host, which is before any card has been built.
+  let nqPreconnected = false;
+  function nqPreconnect(url) {
+    if (nqPreconnected || !url) return;
+    try {
+      const origin = new URL(url, location.href).origin;
+      if (origin === location.origin) return;
+      const link = document.createElement('link');
+      link.rel = 'preconnect';
+      link.href = origin;
+      link.crossOrigin = '';
+      document.head.appendChild(link);
+      nqPreconnected = true;
+    } catch (e) {}
+  }
+
+  // ─── Live prices from the storefront ────────────────────────────────
+  // price / compareAtPrice on a video row are SNAPSHOTS, taken when the product
+  // was attached in the admin. They drift the moment a merchant edits a price or
+  // starts a sale, and rows saved before compareAtPrice existed have it as null
+  // — which is why some cards showed a bare price while the very same product
+  // was discounted on its product page. So a card asks the storefront for the
+  // live numbers (/products/<handle>.js — the same data the theme itself uses,
+  // CDN-cached and cheap) and falls back to the snapshot only if that fails.
+  const productJsonCache = new Map(); // handle → Promise<product json | null>
+
+  function nqHandleOf(url) {
+    const m = String(url || '').match(/\/products\/([^/?#]+)/);
+    return m ? m[1] : '';
+  }
+
+  function nqFetchProductJson(handle) {
+    if (productJsonCache.has(handle)) return productJsonCache.get(handle);
+    // Shopify.routes.root keeps any market/locale prefix (e.g. "/en-in/") intact.
+    const root = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || '/';
+    const req = fetch(root + 'products/' + encodeURIComponent(handle) + '.js', { headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+    productJsonCache.set(handle, req);
+    return req;
+  }
+
+  // Copy the live price + compare-at onto a video object. Returns true when
+  // something actually changed, so only those cards get repainted.
+  function nqApplyLivePrice(v, prod) {
+    if (!prod || !Array.isArray(prod.variants) || !prod.variants.length) return false;
+    const digits = (x) => String(x || '').replace(/\D/g, '');
+    const want = digits(v.variantId);
+    // The pinned variant when it still exists, else whatever a shopper lands on.
+    const variant = (want && prod.variants.find((x) => digits(x.id) === want)) ||
+      prod.variants.find((x) => x.available) || prod.variants[0];
+    // Storefront JSON is in minor units (paise); our fields are in rupees.
+    const price = variant.price != null ? variant.price / 100 : null;
+    let compare = variant.compare_at_price != null ? variant.compare_at_price / 100 : null;
+    // Shopify keeps compare_at_price around after a sale ends, so only a HIGHER
+    // number is a real discount — anything else must not render a "0% off".
+    if (compare != null && price != null && compare <= price) compare = null;
+    const changed = v.price !== price || v.compareAtPrice !== compare;
+    if (price != null) v.price = price;
+    v.compareAtPrice = compare;
+    if (!v.currency && window.Shopify && window.Shopify.currency) v.currency = window.Shopify.currency.active;
+    return changed;
+  }
+
   // ─── Attach HLS or MP4 to a video element ───────────────────────────
   function attachStream(videoEl, src, isHls, onReady) {
     if (isHls && videoEl.canPlayType('application/vnd.apple.mpegurl')) {
@@ -411,10 +492,10 @@
       const prevV = modalVideos[index - 1];
       const nextV = modalVideos[index + 1];
       if (peekPrev)    peekPrev.dataset.hidden    = prevV ? 'false' : 'true';
-      if (peekPrevImg && prevV) { peekPrevImg.src = prevV.thumbnailUrl || ''; peekPrevImg.alt = prevV.productTitle || ''; }
+      if (peekPrevImg && prevV) { peekPrevImg.src = nqPosterUrl(prevV); peekPrevImg.alt = prevV.productTitle || ''; }
       if (arrowPrev)   arrowPrev.dataset.hidden   = prevV ? 'false' : 'true';
       if (peekNext)    peekNext.dataset.hidden    = nextV ? 'false' : 'true';
-      if (peekNextImg && nextV) { peekNextImg.src = nextV.thumbnailUrl || ''; peekNextImg.alt = nextV.productTitle || ''; }
+      if (peekNextImg && nextV) { peekNextImg.src = nqPosterUrl(nextV); peekNextImg.alt = nextV.productTitle || ''; }
       if (arrowNext)   arrowNext.dataset.hidden   = nextV ? 'false' : 'true';
 
       const card = document.getElementById('nq-product-card');
@@ -479,15 +560,15 @@
       // the media-player count tiny regardless of how many videos exist.
       swiperWrapper.innerHTML = videos.map((v, i) => `
         <div class="swiper-slide nq-video-slide">
-          ${v.thumbnailUrl ? `<img class="nq-slide-thumb"${
+          ${nqPosterUrl(v) ? `<img class="nq-slide-thumb"${
             // The slide being opened gets a real src immediately; every other
             // slide stays lazy behind data-src. The carousel has already shown
             // this thumbnail, so it's in cache and paints on the first frame —
             // closing the gap where the <video> behind it was visible. Loading
             // all of them eagerly is what the lazy scheme exists to avoid, so
             // only the active one is promoted.
-            i === index ? ` src="${v.thumbnailUrl}"` : ''
-          } data-src="${v.thumbnailUrl}" alt="" decoding="async">` : ''}
+            i === index ? ` src="${nqPosterUrl(v)}"` : ''
+          } data-src="${nqPosterUrl(v)}" alt="" decoding="async">` : ''}
           <div class="nq-video-loading"><div class="nq-spinner"></div></div>
           <button class="nq-play-overlay" aria-label="Play video" tabindex="-1">
             <svg width="30" height="30" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>
@@ -676,6 +757,10 @@
     }
 
     window._nqOpenModal = openModal;
+    // Let a carousel repaint the open modal's product card once live prices land.
+    window._nqRefreshModal = () => {
+      if (modal && modal.style.display === 'flex') updateUI(modalIndex);
+    };
   }
 
   // ─── Carousel class ─────────────────────────────────────────────────
@@ -699,6 +784,9 @@
       // for the chosen tile_type and wires memory-safe inline video + click→modal
       // itself, so the old default-only helpers are no longer called here.
       this.renderLayout();
+      // Prices are painted from the snapshot first, then corrected from the
+      // storefront. Deliberately not awaited: nothing should wait on it.
+      this.hydratePrices();
     }
 
     // On a PDP the block carries data-product-id (the storefront product id).
@@ -829,6 +917,9 @@
         if (!res.ok) throw new Error('Failed to fetch videos');
         const data = await res.json();
         this.videos = data.videos || [];
+        // Warm the media origin before the first thumbnail is requested.
+        const first = this.videos[0];
+        if (first) nqPreconnect(nqPosterUrl(first) || first.videoUrl);
       } catch (err) {
         console.warn('[NQ Shoppable Videos] Could not load videos:', err.message);
         this.videos = [];
@@ -855,13 +946,57 @@
     // Previews are plain MP4, so they're never HLS.
     vPreview(v)      { return v.previewUrl || this.vMedia(v); }
     vPreviewIsHls(v) { return v.previewUrl ? false : this.vIsHls(v); }
-    vThumb(v)   { return v.thumbnailUrl || ''; }
+    vThumb(v)   { return nqPosterUrl(v); }
     vTitle(v)   { return v.productTitle || v.title || ''; }
     vImage(v)   { return v.productImageUrl || ''; }
     vViews(v)   { return v.viewCount || 0; }
     vPrice(v)   { return v.price != null ? formatPrice(v.price, v.currency) : ''; }
     vCompare(v) { return v.compareAtPrice != null ? formatPrice(v.compareAtPrice, v.currency) : ''; }
     vDiscount(v){ return (v.compareAtPrice && v.price) ? Math.round((1 - v.price / v.compareAtPrice) * 100) : 0; }
+
+    // The price line under a card: price, struck-through compare price and the
+    // % off. Shared by every tile and by the live-price repaint so a discount
+    // always renders the same way.
+    priceMarkup(v) {
+      const price = this.vPrice(v), compare = this.vCompare(v), disc = this.vDiscount(v);
+      if (compare && disc > 0) {
+        return price + ' <span class="nq-orig-price">' + compare + '</span>' +
+               '<span class="nq-disc-badge">' + disc + '% off</span>';
+      }
+      return price;
+    }
+
+    // Correct every card's price from the storefront after the first paint.
+    async hydratePrices() {
+      const jobs = this.videos
+        .map((v, i) => ({ v, i, handle: nqHandleOf(v.productUrl) }))
+        .filter((j) => j.handle);
+      if (!jobs.length) return;
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < jobs.length) {
+          const job = jobs[cursor++];
+          const prod = await nqFetchProductJson(job.handle);
+          if (nqApplyLivePrice(job.v, prod)) this.repaintPrice(job.i, job.v);
+        }
+      };
+      // A few at a time — fast enough to land before a shopper reads the row,
+      // light enough not to compete with the video clips for the connection.
+      await Promise.all(Array.from({ length: Math.min(4, jobs.length) }, worker));
+      if (window._nqRefreshModal) window._nqRefreshModal();
+    }
+
+    // Rewrite just the price node of one card, whichever tile type it is.
+    repaintPrice(i, v) {
+      const card = this.container.querySelector('.nq-card[data-nq-idx="' + i + '"]');
+      if (!card) return;
+      const below = card.querySelector('.nq-below-price');
+      if (below) below.innerHTML = this.priceMarkup(v);
+      const ov = card.querySelector('.nq-ov-price');
+      if (ov) ov.textContent = this.vPrice(v);
+      const pill = card.querySelector('.nq-pill-price');
+      if (pill) pill.textContent = this.vPrice(v);
+    }
 
     openAt(idx) {
       if (window._nqOpenModal) window._nqOpenModal(this.videos, idx);
@@ -912,6 +1047,9 @@
       const ensureEl = () => {
         if (vid) return;
         vid = document.createElement('video');
+        // Starts transparent (see .nq-hover-video) and is revealed only once a
+        // real frame exists. It sits ON TOP of the thumbnail, so revealing it
+        // any earlier is what covered the card with an empty black box.
         vid.className = 'nq-video-el nq-hover-video';
         vid.muted = true; vid.loop = true; vid.playsInline = true; vid.preload = 'auto';
         // iOS/Android autoplay an inline muted video only when these are present
@@ -923,6 +1061,9 @@
         // First play() can fire before data is ready on mobile — retry when ready.
         vid.addEventListener('loadeddata', tryPlay);
         vid.addEventListener('canplay', tryPlay);
+        const reveal = () => vid.classList.add('nq-playing');
+        vid.addEventListener('loadeddata', reveal);
+        vid.addEventListener('playing', reveal);
         const firstImg = card.querySelector('img');
         // Poster = thumbnail, so the card shows the thumb before the clip has a
         // frame and again after its source is released on scroll-away.
@@ -956,6 +1097,9 @@
         if (!loaded) return;
         loaded = false;
         if (vid) {
+          // Hide it again before the source goes: with no source there is no
+          // frame to paint, and the thumbnail underneath should show through.
+          vid.classList.remove('nq-playing');
           const hls = cardHlsMap.get(vid);
           if (hls) { try { hls.destroy(); } catch (x) {} cardHlsMap.delete(vid); }
           try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (x) {}
@@ -988,7 +1132,14 @@
       const fallbackIsHls = this.vIsHls(v);
       const img = document.createElement('img');
       img.className = 'nq-video-el';
-      img.loading = 'lazy'; img.decoding = 'async';
+      // The cards in the first screenful are what a shopper sees the instant the
+      // carousel scrolls in. Lazy-loading those is what left them on the card
+      // background for half a second, so fetch them straight away; the rest stay
+      // lazy so a long carousel still doesn't pull every thumbnail at once.
+      const eagerThumb = i < EAGER_THUMBS;
+      img.loading = eagerThumb ? 'eager' : 'lazy';
+      if (eagerThumb) img.fetchPriority = 'high';
+      img.decoding = 'async';
       img.alt = this.vTitle(v);
       if (thumb) img.src = thumb;
       card.appendChild(img);
@@ -1007,8 +1158,7 @@
     // Per-tile sizing + product overlays (V2 fields).
     applyTile(card, v, s) {
       const cardW = s.cardW, cardH = s.cardH, t = s.tile;
-      const img = this.vImage(v), title = this.vTitle(v), price = this.vPrice(v),
-            compare = this.vCompare(v), disc = this.vDiscount(v);
+      const img = this.vImage(v), title = this.vTitle(v), price = this.vPrice(v);
       const ovTransparent = () => {
         const ov = document.createElement('div'); ov.className = 'nq-ov-transparent';
         ov.innerHTML = (img ? '<img src="' + img + '" class="nq-ov-thumb">' : '') + '<span class="nq-ov-title">' + title + '</span>';
@@ -1031,10 +1181,8 @@
         case 'product_below_3':
         case 'product_below_2': {
           card.style.cssText += 'width:' + cardW + 'px;height:' + cardH + 'px;overflow:visible;';
-          let dh = '';
-          if (compare && disc > 0) dh = '<span class="nq-orig-price">' + compare + '</span><span class="nq-disc-badge">' + disc + '% off</span>';
           const info = document.createElement('div'); info.className = 'nq-below-info';
-          info.innerHTML = '<p class="nq-below-title">' + title + '</p><p class="nq-below-price">' + price + ' ' + dh + '</p>';
+          info.innerHTML = '<p class="nq-below-title">' + title + '</p><p class="nq-below-price">' + this.priceMarkup(v) + '</p>';
           card.appendChild(info); break;
         }
         case 'story_format':
@@ -1045,9 +1193,8 @@
           // Match the product_below tiles: struck-through compare price AND the
           // discount. This tile previously showed the compare price but dropped
           // the percentage, so the same product read differently per tile type.
-          let pr = price; if (compare && disc > 0) pr += ' <span class="nq-orig-price">' + compare + '</span><span class="nq-disc-badge">' + disc + '% off</span>';
           const info = document.createElement('div'); info.className = 'nq-below-info';
-          info.innerHTML = '<p class="nq-below-title">' + title + '</p><p class="nq-below-price">' + pr + '</p>';
+          info.innerHTML = '<p class="nq-below-title">' + title + '</p><p class="nq-below-price">' + this.priceMarkup(v) + '</p>';
           card.appendChild(info); break;
         }
         case 'grid_theme_border': card.style.border = '3px solid ' + s.shopBtn; break;

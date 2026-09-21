@@ -56,6 +56,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             priceRangeV2 {
               minVariantPrice { amount currencyCode }
             }
+            # Fallback for products whose sale price sits on a later variant —
+            # variants(first: 1) alone then reads as "not on sale".
+            compareAtPriceRange {
+              maxVariantCompareAtPrice { amount }
+            }
             variants(first: 1) {
               edges {
                 node {
@@ -83,13 +88,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const variantIdNumeric = variant?.id?.split("/").pop() ?? "";
     const shopDomain = new URL(request.url).hostname;
 
+    const price = variant?.price ?? node.priceRangeV2?.minVariantPrice?.amount ?? "0";
+    // Compare-at from the variant, else the product's highest. Shopify keeps the
+    // field filled after a sale ends, so only a value ABOVE price is a discount;
+    // anything else must stay empty or the card renders a "0% off".
+    const compareRaw =
+      variant?.compareAtPrice ?? node.compareAtPriceRange?.maxVariantCompareAtPrice?.amount ?? "";
+    const compareAtPrice =
+      compareRaw && parseFloat(compareRaw) > parseFloat(price) ? String(compareRaw) : "";
+
     return {
       id: node.id,
       title: node.title,
       variantId: variant?.id ?? "",
       variantIdNumeric,
-      price: variant?.price ?? node.priceRangeV2?.minVariantPrice?.amount ?? "0",
-      compareAtPrice: variant?.compareAtPrice ?? "",
+      price,
+      compareAtPrice,
       currency: node.priceRangeV2?.minVariantPrice?.currencyCode ?? "INR",
       imageUrl:
         node.featuredImage?.url ?? variant?.image?.url ?? "",
@@ -118,12 +132,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const productImageUrl = formData.get("productImageUrl") as string;
   const productUrl    = formData.get("productUrl") as string;
   const videoFile     = formData.get("video") as File | null;
-  const existingUrl   = (formData.get("existingUrl") as string)?.trim();
 
   // ── Validation ────────────────────────────────────────────────────────────
   const hasFile = videoFile && videoFile.size > 0;
-  if (!hasFile && !existingUrl) {
-    return { error: "Please upload a video file or paste an existing R2 URL." };
+  if (!hasFile) {
+    return { error: "Please upload a video file." };
   }
   if (!variantIdNum) {
     return { error: "Please search and select a product." };
@@ -131,20 +144,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // ── Resolve video URL ─────────────────────────────────────────────────────
   let videoUrl = "";
-  if (hasFile) {
-    // Upload new file to R2
-    try {
-      const safeName = videoFile.name.replace(/[^a-z0-9._-]/gi, "_");
-      const key = `videos/${Date.now()}-${safeName}`;
-      const buffer = Buffer.from(await videoFile.arrayBuffer());
-      videoUrl = await uploadToR2(key, buffer, videoFile.type || "video/mp4");
-    } catch (err) {
-      console.error("R2 upload error:", err);
-      return { error: "Failed to upload video. Please try again." };
-    }
-  } else {
-    // Use pasted URL
-    videoUrl = existingUrl;
+  try {
+    const safeName = videoFile.name.replace(/[^a-z0-9._-]/gi, "_");
+    const key = `videos/${Date.now()}-${safeName}`;
+    const buffer = Buffer.from(await videoFile.arrayBuffer());
+    videoUrl = await uploadToR2(key, buffer, videoFile.type || "video/mp4");
+  } catch (err) {
+    console.error("R2 upload error:", err);
+    return { error: "Failed to upload video. Please try again." };
   }
 
   // ── Duplicate check ───────────────────────────────────────────────────────
@@ -387,20 +394,6 @@ export default function NewVideo() {
                 accept="video/mp4,video/quicktime,video/webm"
                 style={{ display: "none" }}
                 onChange={handleVideoChange}
-              />
-            </div>
-
-            {/* ── Or paste existing R2 URL ───────────────────────────── */}
-            <div style={styles.field}>
-              <label style={styles.label}>Or paste an existing R2 URL</label>
-              <p style={styles.hint}>
-                Already have a video in your R2 bucket? Paste its public URL here instead of uploading.
-              </p>
-              <input
-                type="url"
-                name="existingUrl"
-                placeholder="https://pub-xxxx.r2.dev/videos/my-video.mp4"
-                style={styles.input}
               />
             </div>
 
