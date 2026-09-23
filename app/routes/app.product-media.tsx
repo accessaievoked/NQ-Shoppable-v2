@@ -183,42 +183,160 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const videoIds = JSON.parse((form.get("videoIds") as string) || "[]") as string[];
     const removeLinkIds = JSON.parse((form.get("removeLinkIds") as string) || "[]") as string[];
 
-    // Removals first, so freeing a plan slot can make room for an addition in
-    // the same save.
+    // Removals first. Curation-only rows are a plain write; rows that were also
+    // pushed into Shopify's gallery go the long way so the file is unhooked
+    // there and the plan slot is freed.
     for (const linkId of removeLinkIds) {
       try {
-        await detachVideoFromProduct(admin, shop, linkId);
+        const row = await db.productMedia.findFirst({ where: { id: linkId, shop } });
+        if (!row) continue;
+        if (row.shopifyFileId) {
+          await detachVideoFromProduct(admin, shop, linkId);
+        } else {
+          await db.productMedia.update({
+            where: { id: row.id },
+            data: { status: "REMOVED", lastError: null },
+          });
+        }
       } catch (err) {
         console.error(`[ProductMedia] detach failed for ${linkId}:`, err);
       }
     }
 
-    const failures: string[] = [];
+    // Adding a video to a product page is now purely a row in our own database.
+    //
+    // It used to upload the file into Shopify's media gallery, which is why it
+    // was slow (download from R2, re-upload, wait for transcoding) and why it
+    // failed outright once a store hit its plan's store-wide video cap. The
+    // storefront block reads these rows and streams from R2, so there is no cap,
+    // no transcoding wait, and the change is live immediately.
+    //
+    // Pushing into Shopify's own gallery still exists for the rare case where a
+    // video must appear in the theme's native carousel beside the price; that is
+    // now a separate, deliberate action rather than what this button does.
+    const failures: Array<{ title: string; error: string }> = [];
+
+    // Append after whatever is already on this product's page.
+    const last = await db.productMedia.findFirst({
+      where: { shop, productId },
+      orderBy: { position: "desc" },
+      select: { position: true },
+    });
+    let nextPosition = (last?.position ?? -1) + 1;
+
     for (const videoId of videoIds) {
       const video = await db.video.findFirst({ where: { id: videoId, shop } });
       if (!video) {
-        failures.push("A selected video no longer exists.");
+        failures.push({ title: "Video", error: "A selected video no longer exists." });
         continue;
       }
-      const result = await pushVideoToProduct(admin, shop, video, productId);
-      if (!result.ok) failures.push(`${video.title || "Video"}: ${result.error}`);
+      try {
+        await db.productMedia.upsert({
+          where: { shop_videoId_productId: { shop, videoId: video.id, productId } },
+          create: {
+            shop,
+            videoId: video.id,
+            productId,
+            position: nextPosition++,
+            shopifyFileId: "",
+            status: "READY",
+          },
+          // Re-adding something previously removed clears the tombstone.
+          update: { status: "READY", lastError: null },
+        });
+      } catch (err: any) {
+        failures.push({ title: video.title || "Video", error: String(err?.message ?? err) });
+      }
     }
 
-    // Short clips are often ready immediately — try to finish inline so the
-    // merchant sees the result rather than a spinner.
+    // Advance any rows still mid-flight from an earlier Shopify-gallery push.
+    // Curation rows are created READY, so this is a no-op unless the optional
+    // Shopify path was used for this store.
     try {
       await syncPendingProductMedia(admin, shop);
     } catch {
       /* the next poll picks it up */
     }
 
-    return failures.length ? { error: failures.join(" ") } : { ok: true };
+    if (!failures.length) return { ok: true };
+
+    // One line per distinct reason, listing the videos it applied to.
+    const byReason = new Map<string, string[]>();
+    for (const f of failures) {
+      if (!byReason.has(f.error)) byReason.set(f.error, []);
+      byReason.get(f.error)!.push(f.title);
+    }
+    const error = [...byReason.entries()]
+      .map(([reason, titles]) => `${titles.join(", ")} — ${reason}`)
+      .join("\n\n");
+
+    return { error };
   }
 
   if (intent === "detach") {
     const linkId = form.get("linkId") as string;
-    await detachVideoFromProduct(admin, shop, linkId);
+    const row = await db.productMedia.findFirst({ where: { id: linkId, shop } });
+    if (!row) return { ok: true };
+
+    if (row.shopifyFileId) {
+      // This one was also pushed into Shopify's gallery, so unhook it there and
+      // free the plan slot as well.
+      await detachVideoFromProduct(admin, shop, linkId);
+    } else {
+      // Curation-only row: nothing exists in Shopify, so this is just a write.
+      // Kept as a REMOVED tombstone rather than deleted, so a video that is
+      // still tagged to the product doesn't reappear via the tag fallback.
+      await db.productMedia.update({
+        where: { id: row.id },
+        data: { status: "REMOVED", lastError: null },
+      });
+    }
     return { ok: true };
+  }
+
+  // Optional extra: also put these videos into Shopify's OWN media gallery —
+  // the carousel beside the price, which the theme renders from product.media.
+  // That requires a Shopify-hosted copy, so it is the one path still bound by
+  // the plan's store-wide video cap. Deliberately separate from "sync", which
+  // is how the product page is actually served.
+  if (intent === "push-shopify") {
+    const productId = form.get("productId") as string;
+    const videoIds = JSON.parse((form.get("videoIds") as string) || "[]") as string[];
+
+    const failures: Array<{ title: string; error: string }> = [];
+    // The cap is store-wide, so once one push is refused the rest will be too.
+    // Skip them rather than re-uploading each video just to be rejected.
+    let capReached: string | null = null;
+
+    for (const videoId of videoIds) {
+      const video = await db.video.findFirst({ where: { id: videoId, shop } });
+      if (!video) {
+        failures.push({ title: "Video", error: "A selected video no longer exists." });
+        continue;
+      }
+      if (capReached) {
+        failures.push({ title: video.title || "Video", error: capReached });
+        continue;
+      }
+      const result = await pushVideoToProduct(admin, shop, video, productId);
+      if (!result.ok) {
+        if (/all \d+ of the Shopify-hosted videos/i.test(result.error)) capReached = result.error;
+        failures.push({ title: video.title || "Video", error: result.error });
+      }
+    }
+
+    if (!failures.length) return { ok: true };
+
+    const byReason = new Map<string, string[]>();
+    for (const f of failures) {
+      if (!byReason.has(f.error)) byReason.set(f.error, []);
+      byReason.get(f.error)!.push(f.title);
+    }
+    return {
+      error: [...byReason.entries()]
+        .map(([reason, titles]) => `${titles.join(", ")} — ${reason}`)
+        .join("\n\n"),
+    };
   }
 
   if (intent === "gallery") {
@@ -232,6 +350,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const productId = form.get("productId") as string;
     const ids = JSON.parse((form.get("mediaIds") as string) || "[]") as string[];
     if (!ids.length) return { error: "Nothing to reorder." };
+
+    // Two kinds of id can arrive here. Shopify media GIDs come from the Arrange
+    // screen when it is showing the native gallery; our own ProductMedia ids
+    // come from ordering the product page we serve. Telling them apart by
+    // prefix means one endpoint handles both without the UI having to care.
+    const isShopifyMedia = ids.every((id) => id.startsWith("gid://"));
+
+    if (!isShopifyMedia) {
+      // Ordering our own rows: a plain write, applied instantly. No job to
+      // poll, so there is no "saved but still applying" state to warn about.
+      try {
+        await db.$transaction(
+          ids.map((id, index) =>
+            db.productMedia.updateMany({
+              where: { id, shop, productId },
+              data: { position: index },
+            })
+          )
+        );
+        return { ok: true };
+      } catch (err: any) {
+        return { error: String(err?.message ?? err) };
+      }
+    }
+
     try {
       const { confirmed } = await reorderProductMedia(admin, productId, ids);
       return confirmed

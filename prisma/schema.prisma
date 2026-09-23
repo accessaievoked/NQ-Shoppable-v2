@@ -52,26 +52,34 @@ model Video {
   updatedAt       DateTime @updatedAt
 }
 
-/// Links one of our R2-hosted videos to a copy of it living in Shopify's own
-/// product media gallery.
+/// Which of our videos appear on a product's page, and in what order.
 ///
-/// Shopify will not reference an external URL for video — it downloads the file
-/// and hosts its own transcoded copy. So a video that appears in the product
-/// gallery exists twice: our R2 object (used by the carousel and reel player)
-/// and Shopify's file (used by the theme's gallery). This row is the mapping
-/// between the two.
+/// This is the curation table. A row means "the merchant chose this video for
+/// this product's page"; the storefront block reads these rows and plays the
+/// files from R2. Nothing here depends on Shopify storing anything, so the
+/// plan's store-wide video cap (250 on Basic) does not apply.
 ///
-/// Position is deliberately NOT stored here. Shopify owns the ordering, and the
-/// merchant can reorder media in the Shopify admin at any time; caching it
-/// locally would guarantee drift.
+/// It ALSO still records an optional push into Shopify's own media gallery —
+/// the carousel beside the price, which the theme renders from product.media
+/// and which therefore does require a Shopify-hosted copy. That path is now an
+/// opt-in extra for hero products, not how the product page works. When it is
+/// unused, shopifyFileId is "" and status is "READY".
+///
+/// Position IS stored here now. Previously Shopify owned the ordering, so
+/// caching it locally would have drifted; with the product page served from our
+/// own data we are the source of truth.
 model ProductMedia {
   id            String   @id @default(cuid())
   shop          String
   videoId       String // -> Video.id
   productId     String // Shopify product GID, e.g. gid://shopify/Product/123
+  /// Order within the product's page. Lower shows first.
+  position      Int      @default(0)
+  /// Set only when this video was also pushed into Shopify's gallery.
   shopifyFileId String // gid://shopify/Video/456
-  // Mirrors Shopify's fileStatus: PENDING (we haven't called fileCreate yet),
-  // UPLOADED, PROCESSING, READY, FAILED.
+  /// "READY" for curation-only rows. When a Shopify push is involved this
+  /// mirrors Shopify's fileStatus: PENDING, UPLOADED, PROCESSING, READY, FAILED.
+  /// "REMOVED" is a tombstone meaning the merchant deliberately took it off.
   status        String   @default("PENDING")
   lastError     String?
   createdAt     DateTime @default(now())
@@ -79,6 +87,7 @@ model ProductMedia {
 
   @@unique([shop, videoId, productId])
   @@index([shop, status])
+  @@index([shop, productId, position])
 }
 
 model AnalyticsEvent {
