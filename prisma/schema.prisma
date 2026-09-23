@@ -90,6 +90,23 @@ model ProductMedia {
   @@index([shop, productId, position])
 }
 
+/// Products the merchant has chosen to manage videos for.
+///
+/// The Manage product page screen used to derive its rows purely from videos —
+/// a product appeared only because some video pointed at it. That made it
+/// impossible to add a product you hadn't uploaded for yet: the row had nowhere
+/// to live and vanished on refresh. A row here means "show this product in the
+/// list", independently of whether it has any videos.
+model ProductPage {
+  id        String   @id @default(cuid())
+  shop      String
+  productId String // gid://shopify/Product/...
+  createdAt DateTime @default(now())
+
+  @@unique([shop, productId])
+  @@index([shop])
+}
+
 model AnalyticsEvent {
   id        String   @id @default(cuid())
   shop      String

@@ -488,22 +488,24 @@ export default function Index() {
           </div>
         </div>
       )}
-      {/* Upload button */}
+      {/* This screen IS the homepage carousel manager — it's where videos are
+          ordered and toggled on/off the homepage — so the action is labelled
+          for that job rather than for the upload step it happens to start. */}
       <s-button
         slot="primary-action"
         variant="primary"
         onClick={() => navigate("/app/videos/new")}
       >
-        Upload videos
+        Manage homepage
       </s-button>
 
-      {/* Product pages — push videos into the product's own media gallery */}
+      {/* Per-product video management. */}
       <s-button
         slot="secondary-actions"
         variant="secondary"
         onClick={() => navigate("/app/product-media")}
       >
-        Product pages
+        Manage product page
       </s-button>
 
       {total === 0 && !q ? (
