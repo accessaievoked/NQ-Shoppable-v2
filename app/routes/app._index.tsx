@@ -132,6 +132,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               streamUrl: processed.streamUrl,
               previewUrl: processed.previewUrl,
               thumbnailUrl: processed.thumbnailUrl,
+              duration: processed.durationSeconds,
               processingProgress: 100,
               processingError: null,
             },
@@ -507,6 +508,17 @@ export default function Index() {
       >
         Manage product page
       </s-button>
+
+      {/* Instagram import is built but not released — see the note in app.tsx.
+          Restore this button alongside the nav link to turn it on.
+      <s-button
+        slot="secondary-actions"
+        variant="secondary"
+        onClick={() => navigate("/app/videos/instagram")}
+      >
+        Import from Instagram
+      </s-button>
+      */}
 
       {total === 0 && !q ? (
         <s-section>

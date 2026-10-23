@@ -1,7 +1,10 @@
 import ffmpeg from "fluent-ffmpeg";
 import * as fs from "fs/promises";
+import { createWriteStream } from "fs";
 import * as os from "os";
 import * as path from "path";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID!;
@@ -21,12 +24,47 @@ const s3 = new S3Client({
 
 /**
  * Downloads a file from a URL to a local temp path.
+ *
+ * Streams directly to disk instead of buffering the whole video in Node memory.
+ * On the 1GB Fly VM, buffering a 100+ MB phone video alongside ffmpeg's own
+ * allocations was enough to OOM-kill the process, leaving a 0-byte or truncated
+ * file that ffmpeg then couldn't open ("Error opening input file …").
  */
 async function downloadToTemp(url: string, destPath: string): Promise<void> {
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to download ${url}: ${res.status}`);
-  const buffer = Buffer.from(await res.arrayBuffer());
-  await fs.writeFile(destPath, buffer);
+  if (!res.ok) throw new Error(`Failed to download ${url}: HTTP ${res.status}`);
+  if (!res.body) throw new Error(`Empty response body downloading ${url}`);
+
+  // Reject obviously-wrong content types early (e.g. Cloudflare error pages
+  // served as text/html with a 200 status).
+  const ct = res.headers.get("content-type") ?? "";
+  if (ct.startsWith("text/html")) {
+    // Consume the body so the connection doesn't leak, but don't save it.
+    try { await res.arrayBuffer(); } catch { /* best-effort */ }
+    throw new Error(
+      `Download returned HTML instead of a video (${url}). ` +
+      `The file may have been deleted or the storage URL may be unreachable.`
+    );
+  }
+
+  // Stream to disk — keeps memory flat regardless of video size.
+  const nodeStream = Readable.fromWeb(res.body as any);
+  await pipeline(nodeStream, createWriteStream(destPath));
+
+  // Sanity-check: ffmpeg needs at least a few KB to find a container header.
+  const stat = await fs.stat(destPath);
+  if (stat.size === 0) {
+    throw new Error(`Downloaded file is empty (0 bytes) from ${url}`);
+  }
+  if (stat.size < 1024) {
+    // Anything under 1 KB is almost certainly not a real video — it might be a
+    // short JSON/XML error body that Cloudflare or R2 returned as 200.
+    const peek = await fs.readFile(destPath, "utf-8");
+    throw new Error(
+      `Downloaded file is only ${stat.size} bytes from ${url}. ` +
+      `Content: ${peek.slice(0, 200)}`
+    );
+  }
 }
 
 /** Videos at or under this length are their own card preview — see below. */
@@ -197,7 +235,13 @@ export async function processVideo(
   mp4Url: string,
   baseKey: string,
   onProgress?: (pct: number) => void
-): Promise<{ compressedUrl: string; streamUrl: string | null; thumbnailUrl: string; previewUrl: string | null }> {
+): Promise<{
+  compressedUrl: string;
+  streamUrl: string | null;
+  thumbnailUrl: string;
+  previewUrl: string | null;
+  durationSeconds: number | null;
+}> {
   const tmpDir         = await fs.mkdtemp(path.join(os.tmpdir(), "nq-video-"));
   const inputPath      = path.join(tmpDir, "input.mp4");
   const thumbPath      = path.join(tmpDir, "thumbnail.webp");
@@ -209,9 +253,32 @@ export async function processVideo(
     // Nothing reports progress during this step, and on a large phone video it
     // can run for a while — which looked identical to a dead job. Claim a small
     // slice of the bar so the UI can distinguish "fetching" from "stalled".
+    //
+    // R2 public URLs are occasionally unreachable for a few seconds (Cloudflare
+    // edge cache miss, DNS hiccup, etc.). A single transient failure used to
+    // kill the whole job; now we retry up to 3 times with a short back-off.
     console.log(`[Video] Downloading ${mp4Url}`);
     onProgress?.(1);
-    await downloadToTemp(mp4Url, inputPath);
+
+    let lastDownloadErr: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await downloadToTemp(mp4Url, inputPath);
+        lastDownloadErr = null;
+        break;
+      } catch (err) {
+        lastDownloadErr = err;
+        console.warn(
+          `[Video] Download attempt ${attempt}/3 failed:`,
+          (err as Error)?.message ?? err
+        );
+        if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 2000));
+      }
+    }
+    if (lastDownloadErr) throw lastDownloadErr;
+
+    const inputStat = await fs.stat(inputPath);
+    console.log(`[Video] Downloaded ${(inputStat.size / 1024 / 1024).toFixed(1)} MB to ${inputPath}`);
     onProgress?.(5);
 
     // Probe once, up front: the duration decides both where to grab the
@@ -299,7 +366,18 @@ export async function processVideo(
     const sizeKB        = Math.round(mp4Buffer.length / 1024);
     console.log(`[Video] Done — mp4: ${compressedUrl} (${sizeKB} KB) | thumb: ${thumbnailUrl}`);
 
-    return { compressedUrl, streamUrl: null, thumbnailUrl, previewUrl };
+    return {
+      compressedUrl,
+      streamUrl: null,
+      thumbnailUrl,
+      previewUrl,
+      // Surfaced so callers can persist it. We already probe the duration to
+      // decide the thumbnail offset and whether a card clip is worth encoding;
+      // throwing it away meant Video.duration stayed null on every row, and
+      // anything downstream that wants a length — the mobile API, the Shopify
+      // 10-minute product-video check — had nothing to read.
+      durationSeconds: duration === null ? null : Math.round(duration),
+    };
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true });
   }

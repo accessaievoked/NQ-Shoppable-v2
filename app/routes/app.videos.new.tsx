@@ -218,6 +218,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           streamUrl: processed.streamUrl,
           previewUrl: processed.previewUrl,
           thumbnailUrl: processed.thumbnailUrl,
+          duration: processed.durationSeconds,
           processingProgress: 100,
           processingError: null,
         },

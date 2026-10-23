@@ -42,6 +42,12 @@ model Video {
   // "Processing..." forever.
   processingProgress Int?
   processingError    String?
+  // Instagram provenance. Null for browser uploads. Kept so the admin can see
+  // where a video came from, link back to the original post, and so the same
+  // reel can't be imported twice — the existing duplicate check compares
+  // videoUrl, which can't work for imports since every one gets a fresh R2 key.
+  sourceIgShortcode String?
+  sourceIgPermalink String?
   // Settings
   active          Boolean  @default(true)
   sortOrder       Int      @default(0)
@@ -50,6 +56,37 @@ model Video {
   atcCount        Int      @default(0)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  @@index([shop, sourceIgShortcode])
+}
+
+/// A merchant's connected Instagram Business or Creator account.
+///
+/// One row per shop: a Shopify store maps to exactly one Instagram identity.
+/// This row is what proves ownership of an imported reel — we only ever read
+/// media through /me/media using this token, so a reel that isn't on this
+/// account cannot be reached, let alone imported.
+///
+/// accessToken is a long-lived (60-day) Instagram User token, encrypted at rest
+/// with IG_TOKEN_ENC_KEY. It is never sent to the browser and never logged.
+model InstagramAccount {
+  shop           String    @id
+  igUserId       String
+  username       String
+  accessToken    String // AES-256-GCM, "iv:tag:ciphertext" base64
+  tokenExpiresAt DateTime
+  /// Cached /me/media response, so the picker doesn't spend the 200-calls-per-
+  /// hour budget on every render. Refreshed on demand and by an explicit
+  /// Refresh button.
+  mediaCache     String?
+  mediaCachedAt  DateTime?
+  /// Set when the merchant disconnects here, or when Meta calls the deauthorize
+  /// webhook. The row is kept rather than deleted so already-imported videos
+  /// retain their provenance.
+  revokedAt      DateTime?
+  lastError      String?
+  connectedAt    DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 }
 
 /// Which of our videos appear on a product's page, and in what order.
