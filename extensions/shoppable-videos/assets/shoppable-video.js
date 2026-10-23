@@ -551,6 +551,30 @@
       document.body.style.overflow = 'hidden';
       document.body.classList.add('nq-modal-open');
 
+      // Pin the overlay's own geometry and backdrop inline.
+      //
+      // These properties are already in shoppable-video.css, but we render
+      // inside the merchant's theme and a theme stylesheet can outrank ours on
+      // specificity or load order. On one store the backdrop simply never
+      // painted — the player sat over a fully lit page — while every other
+      // modal rule applied normally. Rather than fight the cascade per theme,
+      // set the handful of properties the overlay cannot function without
+      // directly on the elements, where only an !important theme rule could
+      // still reach them.
+      modal.style.position = 'fixed';
+      modal.style.inset = '0';
+      modal.style.zIndex = '99999';
+      if (bg) {
+        bg.style.position = 'absolute';
+        bg.style.inset = '0';
+        bg.style.background = 'rgba(0, 0, 0, 0.88)';
+        bg.style.backdropFilter = 'blur(10px)';
+        bg.style.webkitBackdropFilter = 'blur(10px)';
+        bg.style.pointerEvents = 'auto';
+        bg.style.opacity = '1';
+        bg.style.display = 'block';
+      }
+
       // Free up connections for the modal videos.
       pauseCarouselVideos();
 
@@ -1531,6 +1555,24 @@
     const modals = document.querySelectorAll('#nq-modal');
     for (let i = 1; i < modals.length; i++) {
       if (modals[i].parentNode) modals[i].parentNode.removeChild(modals[i]);
+    }
+
+    // Re-parent the survivor to <body>.
+    //
+    // position:fixed only resolves against the viewport when no ancestor
+    // establishes a containing block. A transform, filter, backdrop-filter,
+    // perspective, contain or will-change on ANY ancestor turns fixed into
+    // absolute — and since the modal ships inside the block's Liquid, its
+    // ancestors are the theme's section markup, which we don't control.
+    // Themes with scroll-reveal animations (transform: translateY(0) counts)
+    // or overflow:hidden sections therefore trapped the player inside the
+    // carousel row: no full-page backdrop, clipped at the section edge.
+    //
+    // Moving the node sidesteps every variant of this without having to know
+    // which property a given theme used. Done before initModal() runs, so the
+    // element references it caches are already in their final home.
+    if (modals[0] && modals[0].parentNode !== document.body) {
+      document.body.appendChild(modals[0]);
     }
 
     document.querySelectorAll('.nq-shoppable-carousel').forEach((el) => {
