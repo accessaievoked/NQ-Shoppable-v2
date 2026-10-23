@@ -20,7 +20,9 @@ export default function App() {
       <s-app-nav>
         <s-link href="/app">Videos</s-link>
         <s-link href="/app/analytics">Analytics</s-link>
-        <s-link href="/app/instagram">Instagram</s-link>
+        {/* Instagram import is built but not released — the Meta app doesn't
+            exist yet, so the screens can't do anything. Restore this link and
+            the "Import from Instagram" button in app._index.tsx to turn it on. */}
       </s-app-nav>
       <Outlet />
     </AppProvider>
