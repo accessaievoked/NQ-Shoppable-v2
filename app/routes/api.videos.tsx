@@ -60,9 +60,23 @@ export async function loader({ request }: LoaderFunctionArgs) {
       },
     });
 
-    // On a PDP, keep only videos matching this product — by id OR handle, since
-    // a stored productId can go stale (re-import / other store) while the handle
-    // stays stable. Done in JS to keep the matching logic simple and forgiving.
+    // On a PDP, keep only videos for this product.
+    //
+    // Two sources, in priority order:
+    //
+    //  1. CURATED — rows in ProductMedia, which is what the merchant picks on
+    //     the Product pages screen. When a product has any, those are exactly
+    //     what shows, in their chosen order. This is what lets a merchant
+    //     remove a video from a product page without untagging it, and it needs
+    //     nothing stored in Shopify, so the plan's video cap never applies.
+    //
+    //  2. TAGGED — videos whose Video.productId points at this product. Used
+    //     when nothing has been curated, so stores that never touch the new
+    //     screen keep behaving exactly as before.
+    //
+    // Matching is by id OR handle because a stored productId goes stale when a
+    // product is re-created (new id, same handle), and forgiving matching beats
+    // a silently empty product page.
     let scoped = videos;
     if (isPdp) {
       const digits = (s: string) => String(s || "").replace(/\D/g, "");
@@ -71,11 +85,46 @@ export async function loader({ request }: LoaderFunctionArgs) {
         return m ? m[1].toLowerCase() : "";
       };
       const targetId = digits(productId);
-      scoped = videos.filter((v) => {
+
+      const matchesProduct = (v: { productId: string; productUrl: string }) => {
         const idMatch = !!targetId && digits(v.productId) === targetId;
         const handleMatch = !!productHandle && handleOf(v.productUrl) === productHandle;
         return idMatch || handleMatch;
-      });
+      };
+
+      // Resolve the product's GID. ProductMedia stores the full
+      // gid://shopify/Product/... form while the storefront only gives us a
+      // numeric id, so build it directly — deriving it from whichever video
+      // happened to match would miss the important case of a product that has
+      // curated videos but none of its own tagged to it.
+      const productGids = new Set<string>();
+      if (targetId) productGids.add(`gid://shopify/Product/${targetId}`);
+      // Belt and braces for any row stored in a different shape.
+      for (const v of videos) {
+        if (matchesProduct(v) && v.productId) productGids.add(v.productId);
+      }
+
+      let curated: Array<{ videoId: string; position: number }> = [];
+      if (productGids.size) {
+        curated = await db.productMedia.findMany({
+          where: {
+            shop,
+            productId: { in: Array.from(productGids) },
+            status: { not: "REMOVED" },
+          },
+          orderBy: { position: "asc" },
+          select: { videoId: true, position: true },
+        });
+      }
+
+      if (curated.length) {
+        const order = new Map(curated.map((c, i) => [c.videoId, c.position * 1000 + i]));
+        scoped = videos
+          .filter((v) => order.has(v.id))
+          .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+      } else {
+        scoped = videos.filter(matchesProduct);
+      }
     }
 
     const origin = new URL(request.url).origin;

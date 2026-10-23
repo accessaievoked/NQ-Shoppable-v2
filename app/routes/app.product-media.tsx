@@ -21,7 +21,6 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import {
   pushVideoToProduct,
-  autoAddMissingVideos,
   syncPendingProductMedia,
   getProductGallery,
   getProductGalleries,
@@ -34,6 +33,8 @@ type LinkRow = {
   id: string;
   videoId: string;
   productId: string;
+  /** Order on the product page. Lower shows first. */
+  position: number;
   status: string;
   lastError: string | null;
 };
@@ -44,14 +45,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  // Push anything tagged to a product that hasn't been sent yet — videos from
-  // before this feature existed, or whose upload-time auto-add didn't run.
-  // Bounded per load so one visit can't kick off dozens of uploads.
-  try {
-    await autoAddMissingVideos(admin, shop, 5);
-  } catch (err) {
-    console.error("[ProductMedia] auto-add on load failed:", err);
-  }
+  // NOTE: the automatic backfill (autoAddMissingVideos) is deliberately NOT
+  // called here any more.
+  //
+  // Pushing every tagged video into Shopify on page load is what exhausted the
+  // store-wide video allowance (250 on Basic) — the cap counts Shopify-hosted
+  // videos across the WHOLE store, so a large library fills it regardless of
+  // how many videos any one product has. Once full, every further push fails
+  // and the screen fills with red "Failed" cards.
+  //
+  // Native-gallery placement is now opt-in: the merchant pushes the specific
+  // videos worth a slot via the "Add another media" button (intent: "sync").
+  // Everything else still plays on the product page through our own storefront
+  // block, which reads from R2 and has no Shopify limit at all.
+  //
+  // autoAddMissingVideos is kept exported for a future explicit "backfill all"
+  // action; it must not run unattended.
 
   // Advance any in-flight imports before rendering. Transcoding usually
   // finishes in seconds, so doing it on page load avoids needing a scheduler.
@@ -88,6 +97,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     if (l.status !== "REMOVED") addTo(l.productId, l.videoId);
   }
 
+  // Products the merchant explicitly added to this screen. These may have no
+  // videos at all yet — that's the point: you add the product first, then
+  // upload for it. Seed an empty set so the row still renders.
+  const tracked = await db.productPage.findMany({
+    where: { shop },
+    select: { productId: true },
+  });
+  for (const t of tracked) {
+    if (t.productId && !byProduct.has(t.productId)) byProduct.set(t.productId, new Set());
+  }
+
   // One batched request per 50 products instead of one per product. Fanning
   // out individually made this page slow enough on a large catalogue that it
   // never finished loading.
@@ -105,6 +125,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       const linksHere = links.filter(
         (l) => l.productId === productId && l.status !== "REMOVED"
       );
+
+      // Show them in the order the storefront will. Videos with no link row
+      // (tagged but never curated) sort last, keeping a stable list.
+      const positionOf = (videoId: string) => {
+        const l = linksHere.find((x) => x.videoId === videoId);
+        return l ? l.position : Number.MAX_SAFE_INTEGER;
+      };
+      vids.sort((a, b) => positionOf(a.id) - positionOf(b.id));
 
       return {
         productId,
@@ -171,47 +199,223 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const form = await request.formData();
   const intent = form.get("intent") as string;
 
+  // Search the store's catalogue so a product can be added to this screen
+  // before it has any videos.
+  if (intent === "search-products") {
+    const q = ((form.get("q") as string) || "").trim();
+    try {
+      const response = await admin.graphql(
+        `#graphql
+          query nqProductSearch($query: String!) {
+            products(first: 15, query: $query) {
+              edges {
+                node {
+                  id
+                  title
+                  status
+                  featuredMedia { preview { image { url } } }
+                  priceRangeV2 { minVariantPrice { amount currencyCode } }
+                }
+              }
+            }
+          }`,
+        { variables: { query: q ? `title:*${q}*` : "" } }
+      );
+      const json: any = await response.json();
+      const products = (json?.data?.products?.edges ?? []).map((e: any) => ({
+        id: e.node.id,
+        title: e.node.title,
+        status: e.node.status,
+        imageUrl: e.node.featuredMedia?.preview?.image?.url ?? null,
+        price: e.node.priceRangeV2?.minVariantPrice?.amount ?? null,
+        currency: e.node.priceRangeV2?.minVariantPrice?.currencyCode ?? null,
+      }));
+      return { products };
+    } catch (err: any) {
+      return { error: String(err?.message ?? err) };
+    }
+  }
+
+  // Add a product to this screen. Creates only the "manage this product" marker;
+  // videos are attached afterwards from its Manage videos window.
+  if (intent === "add-product") {
+    const productId = form.get("productId") as string;
+    if (!productId) return { error: "No product selected." };
+    await db.productPage.upsert({
+      where: { shop_productId: { shop, productId } },
+      create: { shop, productId },
+      update: {},
+    });
+    return { ok: true };
+  }
+
+  // Stop listing a product here. Videos and their links are left alone — the
+  // product simply drops off the screen unless a video still points at it.
+  if (intent === "remove-product") {
+    const productId = form.get("productId") as string;
+    await db.productPage.deleteMany({ where: { shop, productId } });
+    return { ok: true };
+  }
+
   if (intent === "sync") {
     const productId = form.get("productId") as string;
     const videoIds = JSON.parse((form.get("videoIds") as string) || "[]") as string[];
     const removeLinkIds = JSON.parse((form.get("removeLinkIds") as string) || "[]") as string[];
 
-    // Removals first, so freeing a plan slot can make room for an addition in
-    // the same save.
+    // Removals first. Curation-only rows are a plain write; rows that were also
+    // pushed into Shopify's gallery go the long way so the file is unhooked
+    // there and the plan slot is freed.
     for (const linkId of removeLinkIds) {
       try {
-        await detachVideoFromProduct(admin, shop, linkId);
+        const row = await db.productMedia.findFirst({ where: { id: linkId, shop } });
+        if (!row) continue;
+        if (row.shopifyFileId) {
+          await detachVideoFromProduct(admin, shop, linkId);
+        } else {
+          await db.productMedia.update({
+            where: { id: row.id },
+            data: { status: "REMOVED", lastError: null },
+          });
+        }
       } catch (err) {
         console.error(`[ProductMedia] detach failed for ${linkId}:`, err);
       }
     }
 
-    const failures: string[] = [];
+    // Adding a video to a product page is now purely a row in our own database.
+    //
+    // It used to upload the file into Shopify's media gallery, which is why it
+    // was slow (download from R2, re-upload, wait for transcoding) and why it
+    // failed outright once a store hit its plan's store-wide video cap. The
+    // storefront block reads these rows and streams from R2, so there is no cap,
+    // no transcoding wait, and the change is live immediately.
+    //
+    // Pushing into Shopify's own gallery still exists for the rare case where a
+    // video must appear in the theme's native carousel beside the price; that is
+    // now a separate, deliberate action rather than what this button does.
+    const failures: Array<{ title: string; error: string }> = [];
+
+    // Append after whatever is already on this product's page.
+    const last = await db.productMedia.findFirst({
+      where: { shop, productId },
+      orderBy: { position: "desc" },
+      select: { position: true },
+    });
+    let nextPosition = (last?.position ?? -1) + 1;
+
     for (const videoId of videoIds) {
       const video = await db.video.findFirst({ where: { id: videoId, shop } });
       if (!video) {
-        failures.push("A selected video no longer exists.");
+        failures.push({ title: "Video", error: "A selected video no longer exists." });
         continue;
       }
-      const result = await pushVideoToProduct(admin, shop, video, productId);
-      if (!result.ok) failures.push(`${video.title || "Video"}: ${result.error}`);
+      try {
+        await db.productMedia.upsert({
+          where: { shop_videoId_productId: { shop, videoId: video.id, productId } },
+          create: {
+            shop,
+            videoId: video.id,
+            productId,
+            position: nextPosition++,
+            shopifyFileId: "",
+            status: "READY",
+          },
+          // Re-adding something previously removed clears the tombstone.
+          update: { status: "READY", lastError: null },
+        });
+      } catch (err: any) {
+        failures.push({ title: video.title || "Video", error: String(err?.message ?? err) });
+      }
     }
 
-    // Short clips are often ready immediately — try to finish inline so the
-    // merchant sees the result rather than a spinner.
+    // Advance any rows still mid-flight from an earlier Shopify-gallery push.
+    // Curation rows are created READY, so this is a no-op unless the optional
+    // Shopify path was used for this store.
     try {
       await syncPendingProductMedia(admin, shop);
     } catch {
       /* the next poll picks it up */
     }
 
-    return failures.length ? { error: failures.join(" ") } : { ok: true };
+    if (!failures.length) return { ok: true };
+
+    // One line per distinct reason, listing the videos it applied to.
+    const byReason = new Map<string, string[]>();
+    for (const f of failures) {
+      if (!byReason.has(f.error)) byReason.set(f.error, []);
+      byReason.get(f.error)!.push(f.title);
+    }
+    const error = [...byReason.entries()]
+      .map(([reason, titles]) => `${titles.join(", ")} — ${reason}`)
+      .join("\n\n");
+
+    return { error };
   }
 
   if (intent === "detach") {
     const linkId = form.get("linkId") as string;
-    await detachVideoFromProduct(admin, shop, linkId);
+    const row = await db.productMedia.findFirst({ where: { id: linkId, shop } });
+    if (!row) return { ok: true };
+
+    if (row.shopifyFileId) {
+      // This one was also pushed into Shopify's gallery, so unhook it there and
+      // free the plan slot as well.
+      await detachVideoFromProduct(admin, shop, linkId);
+    } else {
+      // Curation-only row: nothing exists in Shopify, so this is just a write.
+      // Kept as a REMOVED tombstone rather than deleted, so a video that is
+      // still tagged to the product doesn't reappear via the tag fallback.
+      await db.productMedia.update({
+        where: { id: row.id },
+        data: { status: "REMOVED", lastError: null },
+      });
+    }
     return { ok: true };
+  }
+
+  // Optional extra: also put these videos into Shopify's OWN media gallery —
+  // the carousel beside the price, which the theme renders from product.media.
+  // That requires a Shopify-hosted copy, so it is the one path still bound by
+  // the plan's store-wide video cap. Deliberately separate from "sync", which
+  // is how the product page is actually served.
+  if (intent === "push-shopify") {
+    const productId = form.get("productId") as string;
+    const videoIds = JSON.parse((form.get("videoIds") as string) || "[]") as string[];
+
+    const failures: Array<{ title: string; error: string }> = [];
+    // The cap is store-wide, so once one push is refused the rest will be too.
+    // Skip them rather than re-uploading each video just to be rejected.
+    let capReached: string | null = null;
+
+    for (const videoId of videoIds) {
+      const video = await db.video.findFirst({ where: { id: videoId, shop } });
+      if (!video) {
+        failures.push({ title: "Video", error: "A selected video no longer exists." });
+        continue;
+      }
+      if (capReached) {
+        failures.push({ title: video.title || "Video", error: capReached });
+        continue;
+      }
+      const result = await pushVideoToProduct(admin, shop, video, productId);
+      if (!result.ok) {
+        if (/all \d+ of the Shopify-hosted videos/i.test(result.error)) capReached = result.error;
+        failures.push({ title: video.title || "Video", error: result.error });
+      }
+    }
+
+    if (!failures.length) return { ok: true };
+
+    const byReason = new Map<string, string[]>();
+    for (const f of failures) {
+      if (!byReason.has(f.error)) byReason.set(f.error, []);
+      byReason.get(f.error)!.push(f.title);
+    }
+    return {
+      error: [...byReason.entries()]
+        .map(([reason, titles]) => `${titles.join(", ")} — ${reason}`)
+        .join("\n\n"),
+    };
   }
 
   if (intent === "gallery") {
@@ -225,6 +429,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const productId = form.get("productId") as string;
     const ids = JSON.parse((form.get("mediaIds") as string) || "[]") as string[];
     if (!ids.length) return { error: "Nothing to reorder." };
+
+    // Two kinds of id can arrive here. Shopify media GIDs come from the Arrange
+    // screen when it is showing the native gallery; our own ProductMedia ids
+    // come from ordering the product page we serve. Telling them apart by
+    // prefix means one endpoint handles both without the UI having to care.
+    const isShopifyMedia = ids.every((id) => id.startsWith("gid://"));
+
+    if (!isShopifyMedia) {
+      // Ordering our own rows: a plain write, applied instantly. No job to
+      // poll, so there is no "saved but still applying" state to warn about.
+      try {
+        await db.$transaction(
+          ids.map((id, index) =>
+            db.productMedia.updateMany({
+              where: { id, shop, productId },
+              data: { position: index },
+            })
+          )
+        );
+        return { ok: true };
+      } catch (err: any) {
+        return { error: String(err?.message ?? err) };
+      }
+    }
+
     try {
       const { confirmed } = await reorderProductMedia(admin, productId, ids);
       return confirmed
@@ -270,21 +499,23 @@ export default function ProductMedia() {
   const active = rows.find((r) => r.productId === openProduct) ?? null;
 
   return (
-    <s-page heading="Product pages">
+    <s-page heading="Manage product page">
       <s-button slot="primary-action" variant="secondary" onClick={() => navigate("/app")}>
         Back to videos
       </s-button>
 
       <s-section>
         <p style={styles.intro}>
-          Add a video to the product's own media gallery — the carousel next to the
-          price and Add to Cart button. Separate from the storefront carousel
-          section. Click a product to manage its media.
+          Choose which videos play on each product's page. Add a product, then use
+          Manage videos to upload, arrange or remove its videos. These play from
+          your own storage, so there's no Shopify video limit.
         </p>
+
+        <AddProductBar />
 
         <input
           style={styles.search}
-          placeholder="Search by product title..."
+          placeholder="Search products already added..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -428,9 +659,117 @@ function ProductRow({ row, onOpen }: { row: Row; onOpen: () => void }) {
 
       <div style={styles.tdActions}>
         <button type="button" style={styles.btnPrimary} onClick={onOpen}>
-          Manage media
+          Manage videos
         </button>
       </div>
+    </div>
+  );
+}
+
+// ─── Add a product to this screen ─────────────────────────────────────────────
+
+/**
+ * Searches the store's catalogue and adds the chosen product as a row.
+ *
+ * Needed because the list used to be derived from videos alone, so there was no
+ * way to set up a product before uploading anything for it.
+ */
+function AddProductBar() {
+  const search = useFetcher<{ products?: any[]; error?: string }>();
+  const add = useFetcher<{ ok?: boolean; error?: string }>();
+  const revalidator = useRevalidator();
+
+  const [term, setTerm] = useState("");
+  const [open, setOpen] = useState(false);
+
+  // Debounced so typing doesn't fire a Shopify query per keystroke.
+  useEffect(() => {
+    if (!open) return;
+    const t = setTimeout(() => {
+      const fd = new FormData();
+      fd.append("intent", "search-products");
+      fd.append("q", term);
+      search.submit(fd, { method: "post" });
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [term, open]);
+
+  // Refresh the table once the product has been added.
+  useEffect(() => {
+    if (add.state === "idle" && add.data?.ok) {
+      setOpen(false);
+      setTerm("");
+      revalidator.revalidate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [add.state, add.data]);
+
+  const results = search.data?.products ?? [];
+
+  return (
+    <div style={styles.addProductWrap}>
+      {!open ? (
+        <button type="button" style={styles.btnPrimary} onClick={() => setOpen(true)}>
+          + Add product
+        </button>
+      ) : (
+        <div style={styles.addProductPanel}>
+          <div style={styles.addProductHead}>
+            <input
+              autoFocus
+              style={styles.search}
+              placeholder="Search your products by title..."
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+            />
+            <button type="button" style={styles.btnGhost} onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+          </div>
+
+          {search.state !== "idle" ? (
+            <div style={styles.muted}>Searching…</div>
+          ) : search.data?.error ? (
+            <div style={styles.errorText}>{search.data.error}</div>
+          ) : results.length === 0 ? (
+            <div style={styles.muted}>
+              {term ? "No products match that search." : "Type to search your products."}
+            </div>
+          ) : (
+            <div style={styles.addProductList}>
+              {results.map((p: any) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  style={styles.addProductItem}
+                  disabled={add.state !== "idle"}
+                  onClick={() => {
+                    const fd = new FormData();
+                    fd.append("intent", "add-product");
+                    fd.append("productId", p.id);
+                    add.submit(fd, { method: "post" });
+                  }}
+                >
+                  {p.imageUrl ? (
+                    <img src={p.imageUrl} alt="" style={styles.addProductThumb} />
+                  ) : (
+                    <div style={styles.addProductThumb} />
+                  )}
+                  <span style={styles.addProductTitle}>{p.title}</span>
+                  {p.price && (
+                    <span style={styles.muted}>
+                      {p.currency} {p.price}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {add.data?.error && <div style={styles.errorText}>{add.data.error}</div>}
+        </div>
+      )}
     </div>
   );
 }
@@ -451,6 +790,7 @@ function ProductMediaPanel({
   onClose: () => void;
 }) {
   const [view, setView] = useState<PanelView>("list");
+  const navigate = useNavigate();
 
   return (
     <div style={styles.overlay} onClick={onClose}>
@@ -459,10 +799,10 @@ function ProductMediaPanel({
           <div>
             <div style={styles.modalTitle}>
               {view === "add"
-                ? "Add media"
+                ? "Add videos"
                 : view === "arrange"
-                  ? "Arrange media"
-                  : "Product page media"}
+                  ? "Arrange videos"
+                  : "Product page videos"}
             </div>
             <div style={styles.modalSub}>{row.title}</div>
           </div>
@@ -470,17 +810,33 @@ function ProductMediaPanel({
           <div style={styles.modalHeadActions}>
             {view === "list" ? (
               <>
-                <button type="button" style={styles.btnPrimary} onClick={() => setView("add")}>
-                  + Add another media
+                {/* Upload goes to the dedicated upload screen with this product
+                    already chosen, rather than rebuilding the whole upload +
+                    progress flow inside a modal. It returns here when done. */}
+                <button
+                  type="button"
+                  style={styles.btnPrimary}
+                  onClick={() =>
+                    navigate(
+                      `/app/videos/new?productId=${encodeURIComponent(row.productId)}` +
+                        `&productTitle=${encodeURIComponent(row.title || "")}` +
+                        `&returnTo=${encodeURIComponent("/app/product-media")}`
+                    )
+                  }
+                >
+                  ↑ Upload new video
+                </button>
+                <button type="button" style={styles.btnGhost} onClick={() => setView("add")}>
+                  + Add from library
                 </button>
                 <button
                   type="button"
                   style={styles.btnGhost}
                   onClick={() => setView("arrange")}
                   disabled={row.galleryCount === 0}
-                  title={row.galleryCount === 0 ? "This product has no media yet" : undefined}
+                  title={row.galleryCount === 0 ? "This product has no videos yet" : undefined}
                 >
-                  Arrange media
+                  Arrange videos
                 </button>
               </>
             ) : (
@@ -503,7 +859,7 @@ function ProductMediaPanel({
             onDone={() => setView("list")}
           />
         )}
-        {view === "arrange" && <ArrangeView productId={row.productId} onDone={() => setView("list")} />}
+        {view === "arrange" && <ArrangeView row={row} onDone={() => setView("list")} />}
       </div>
     </div>
   );
@@ -834,28 +1190,37 @@ function AddMediaView({
   );
 }
 
-/** Full gallery — images and videos — drag to reorder or type a position. */
-function ArrangeView({ productId, onDone }: { productId: string; onDone: () => void }) {
-  const load = useFetcher<{ gallery?: ProductGallery; error?: string }>();
+/**
+ * Orders the videos shown on the product page.
+ *
+ * This used to load and reorder Shopify's own media gallery. The product page
+ * is now served from our data, so it reorders OUR rows instead: the ids sent on
+ * save are ProductMedia ids, and the action writes `position` directly. That
+ * makes it instant — there's no Shopify job to poll and no "saved but still
+ * applying" state.
+ */
+function ArrangeView({ row, onDone }: { row: Row; onDone: () => void }) {
   const save = useFetcher<{ ok?: boolean; error?: string; warning?: string }>();
-  const [items, setItems] = useState<ProductGallery["media"]>([]);
+  const productId = row.productId;
   const [dragIndex, setDragIndex] = useState<number | null>(null);
-  // Videos-only by default: a product typically has a dozen near-identical
-  // photos and one or two videos, and ordering the videos is the actual job.
-  // "All media" is there for when the video's position among the photos matters.
-  const [videosOnly, setVideosOnly] = useState(true);
 
-  useEffect(() => {
-    const fd = new FormData();
-    fd.append("intent", "gallery");
-    fd.append("productId", productId);
-    load.submit(fd, { method: "post" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productId]);
+  // Mapped into the shape the drag UI below already expects. `id` is the
+  // ProductMedia id, because that's what save submits.
+  const [items, setItems] = useState<ProductGallery["media"]>(() =>
+    row.videos
+      .filter((v) => v.linkId)
+      .map((v) => ({
+        id: v.linkId as string,
+        type: "VIDEO",
+        alt: v.title,
+        previewUrl: v.thumbnailUrl || null,
+        hoverUrl: v.hoverUrl,
+      }))
+  );
 
-  useEffect(() => {
-    if (load.data?.gallery) setItems(load.data.gallery.media);
-  }, [load.data]);
+  // Everything here is a video now, so the old images/videos filter is gone.
+  const videosOnly = true;
+  const setVideosOnly = (_: boolean) => {};
 
   useEffect(() => {
     if (save.data?.ok && !save.data.warning) onDone();
@@ -914,50 +1279,19 @@ function ArrangeView({ productId, onDone }: { productId: string; onDone: () => v
   return (
     <>
       <div style={styles.modalBody}>
-        {load.state !== "idle" && !items.length && <p>Loading gallery…</p>}
-        {load.data?.error && <p style={styles.stateFail}>{load.data.error}</p>}
+        {items.length === 0 && (
+          <div style={styles.empty}>
+            No videos on this product page yet. Use “Upload new video” or “Add
+            from library”, then come back here to order them.
+          </div>
+        )}
 
         {items.length > 0 && (
           <>
-            <div style={styles.arrangeBar}>
-              <div style={styles.toggle}>
-                <button
-                  type="button"
-                  onClick={() => setVideosOnly(true)}
-                  style={videosOnly ? styles.toggleOn : styles.toggleOff}
-                >
-                  Videos ({items.filter((i) => i.type === "VIDEO").length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVideosOnly(false)}
-                  style={!videosOnly ? styles.toggleOn : styles.toggleOff}
-                >
-                  All media ({items.length})
-                </button>
-              </div>
-            </div>
-
             <p style={styles.modalHint}>
-              {videosOnly
-                ? "Drag a tile, or type a number, to set the order the videos appear in. Photos stay where they are."
-                : "Drag a tile, or type a number to move it there. Position 1 is the product's main media everywhere — collection pages, search results and cart thumbnails."}
+              Drag a tile, or type a number, to set the order these videos play
+              on the product page. Saved instantly — no Shopify limits apply.
             </p>
-
-            {videosOnly && visible.length === 0 && (
-              <div style={styles.empty}>
-                No videos on this product page yet. Add one from “+ Add another
-                media”, then come back here to order them.
-              </div>
-            )}
-
-            {!videosOnly && videoFirst && (
-              <div style={styles.warn}>
-                A video is in position 1, so it replaces the product photo as the
-                thumbnail across the storefront. Move an image first if that isn't
-                what you want.
-              </div>
-            )}
 
             <div style={styles.grid}>
               {visible.map((item, index) => (
@@ -1039,6 +1373,46 @@ const styles: Record<string, React.CSSProperties> = {
   },
   empty: { padding: "40px", textAlign: "center", color: "#8a8a8a", fontSize: "14px" },
   muted: { color: "#8a8a8a", fontSize: "12px" },
+  errorText: { color: "#b42318", fontSize: "12px", marginTop: "8px", whiteSpace: "pre-line" },
+
+  // Add-product picker
+  addProductWrap: { marginBottom: "14px" },
+  addProductPanel: {
+    border: "1px solid #e3e3e3",
+    borderRadius: "10px",
+    padding: "12px",
+    background: "#fafafa",
+  },
+  addProductHead: { display: "flex", gap: "8px", alignItems: "flex-start" },
+  addProductList: {
+    maxHeight: "300px",
+    overflowY: "auto",
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+  },
+  addProductItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    width: "100%",
+    padding: "8px",
+    borderRadius: "8px",
+    border: "1px solid transparent",
+    background: "#fff",
+    cursor: "pointer",
+    textAlign: "left",
+    fontSize: "13px",
+  },
+  addProductThumb: {
+    width: "34px",
+    height: "34px",
+    borderRadius: "6px",
+    objectFit: "cover",
+    background: "#eee",
+    flex: "0 0 auto",
+  },
+  addProductTitle: { flex: 1, fontWeight: 500, color: "#202223" },
   table: { border: "1px solid #e3e3e3", borderRadius: "10px", overflow: "hidden" },
   tr: {
     display: "flex",

@@ -7,6 +7,7 @@ import {
   useLoaderData,
   useNavigate,
   useFetcher,
+  useSearchParams,
   Form,
   redirect,
 } from "react-router";
@@ -16,7 +17,6 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { uploadToR2, deleteFromR2ByUrl } from "../r2.server";
 import { processVideo } from "../ffmpeg.server";
-import { pushVideoToProduct, syncPendingProductMedia } from "../shopifyMedia.server";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Product = {
@@ -118,7 +118,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   // `admin` is needed after the response returns, for the auto-add to the
   // product page — it holds the shop's offline token, so it stays usable.
-  const { session, admin } = await authenticate.admin(request);
+  // `admin` is no longer destructured here: the Shopify product-media push used
+  // to run from this action, and is now opt-in from the Product pages screen.
+  const { session } = await authenticate.admin(request);
 
   const formData = await request.formData();
   const title         = (formData.get("title") as string)?.trim();
@@ -236,31 +238,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       console.log(`[Video] Background processing complete for video ${video.id}`);
 
-      // Auto-add to the tagged product's page. Uploading a video against a
-      // product almost always means you want it visible there, so the manual
-      // "Add media" step is skipped. Runs here rather than at save time because
-      // Shopify needs the finished, compressed file — at save time videoUrl is
-      // still the raw upload, which gets deleted a few lines above.
-      if (productId) {
-        try {
-          const ready = await db.video.findUnique({ where: { id: video.id } });
-          if (ready?.videoUrl) {
-            const push = await pushVideoToProduct(admin, session.shop, ready, productId);
-            if (push.ok) {
-              // Attach it once Shopify finishes transcoding.
-              await syncPendingProductMedia(admin, session.shop);
-              console.log(`[Video] Added video ${video.id} to product page`);
-            } else {
-              // Most likely the store's plan video allowance. Not fatal — the
-              // video still works in the storefront carousel, and the reason is
-              // shown on the Product pages screen.
-              console.warn(`[Video] Could not add ${video.id} to product page: ${push.error}`);
-            }
-          }
-        } catch (pushErr) {
-          console.error(`[Video] Auto-add to product page failed for ${video.id}:`, pushErr);
-        }
-      }
+      // NOTE: uploading no longer auto-pushes the video into Shopify's product
+      // media gallery.
+      //
+      // Shopify caps hosted videos per plan, counted across the WHOLE store
+      // (250 on Basic). Pushing on every upload meant a growing library filled
+      // that cap on its own, after which each new upload failed and left a red
+      // "Failed" card on the Product pages screen — for a video that was
+      // working perfectly well on the storefront.
+      //
+      // Native-gallery placement is now a deliberate choice: the merchant picks
+      // the videos worth a slot from the Product pages screen. Every video still
+      // appears on the product page via our storefront block, which reads from
+      // R2 and has no Shopify limit ("Show On Product Pages" in the block's
+      // theme settings).
     })
     .catch(async (err) => {
       console.error(`[Video] Background processing failed for video ${video.id}:`, err);
@@ -274,7 +265,36 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         .catch(() => {});
     });
 
-  return redirect("/app");
+  // When the upload was started from "Manage product page", put the new video
+  // straight onto that product's page and go back there. Without this the
+  // merchant would upload for a product and then have to add it again by hand.
+  const returnTo = (formData.get("returnTo") as string) || "";
+  if (productId && returnTo) {
+    try {
+      const last = await db.productMedia.findFirst({
+        where: { shop: session.shop, productId },
+        orderBy: { position: "desc" },
+        select: { position: true },
+      });
+      await db.productMedia.upsert({
+        where: { shop_videoId_productId: { shop: session.shop, videoId: video.id, productId } },
+        create: {
+          shop: session.shop,
+          videoId: video.id,
+          productId,
+          position: (last?.position ?? -1) + 1,
+          shopifyFileId: "",
+          status: "READY",
+        },
+        update: { status: "READY", lastError: null },
+      });
+    } catch (err) {
+      // Non-fatal: the video uploaded fine, it just isn't curated yet.
+      console.error(`[Video] Could not add ${video.id} to product page:`, err);
+    }
+  }
+
+  return redirect(returnTo || "/app");
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -293,6 +313,34 @@ export default function NewVideo() {
 
   const searchResults: Product[] = fetcher.data?.products ?? [];
 
+  // ── Arriving from "Manage product page" with a product already chosen ──
+  //
+  // That screen links here with productId/productTitle so the merchant doesn't
+  // have to find the product again, and returnTo so Cancel/Done goes back where
+  // they came from. The product is resolved by running the normal search for
+  // its title and matching on id, which keeps one code path for selection.
+  const [searchParams] = useSearchParams();
+  const presetProductId = searchParams.get("productId");
+  const presetProductTitle = searchParams.get("productTitle") || "";
+  const returnTo = searchParams.get("returnTo") || "/app";
+  const [presetResolved, setPresetResolved] = useState(false);
+
+  useEffect(() => {
+    if (!presetProductId || presetResolved || selectedProduct) return;
+    if (!searchQuery && presetProductTitle) setSearchQuery(presetProductTitle);
+  }, [presetProductId, presetProductTitle, presetResolved, selectedProduct, searchQuery]);
+
+  useEffect(() => {
+    if (!presetProductId || presetResolved || selectedProduct) return;
+    const match = searchResults.find((p) => p.id === presetProductId);
+    if (match) {
+      setSelectedProduct(match);
+      setSearchQuery(match.title);
+      setShowDropdown(false);
+      setPresetResolved(true);
+    }
+  }, [searchResults, presetProductId, presetResolved, selectedProduct]);
+
   // Debounced product search
   useEffect(() => {
     if (searchQuery.length < 2) {
@@ -301,7 +349,8 @@ export default function NewVideo() {
     }
     const timer = setTimeout(() => {
       fetcher.load(`/app/videos/new?q=${encodeURIComponent(searchQuery)}`);
-      setShowDropdown(true);
+      // Don't pop the dropdown open while we're silently resolving a preset.
+      setShowDropdown(!(presetProductId && !presetResolved));
     }, 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
@@ -330,11 +379,13 @@ export default function NewVideo() {
 
   return (
     <s-page heading="Add Shoppable Video">
-      {/* Back button */}
+      {/* Back goes wherever we came from — the product page screen links here
+          with returnTo so the merchant lands back on the product they were
+          managing rather than the video library. */}
       <s-button
         slot="primary-action"
         variant="secondary"
-        onClick={() => navigate("/app")}
+        onClick={() => navigate(returnTo)}
       >
         ← Back
       </s-button>
@@ -353,6 +404,9 @@ export default function NewVideo() {
           <input type="hidden" name="productTitle"    value={selectedProduct?.title ?? ""} />
           <input type="hidden" name="price"           value={selectedProduct?.price ?? ""} />
           <input type="hidden" name="compareAtPrice"  value={selectedProduct?.compareAtPrice ?? ""} />
+          {/* Present only when launched from Manage product page; tells the
+              action to curate the video onto that product and where to return. */}
+          <input type="hidden" name="returnTo"        value={presetProductId ? returnTo : ""} />
           <input type="hidden" name="currency"        value={selectedProduct?.currency ?? ""} />
           <input type="hidden" name="productImageUrl" value={selectedProduct?.imageUrl ?? ""} />
           <input type="hidden" name="productUrl"      value={selectedProduct?.productUrl ?? ""} />

@@ -143,8 +143,22 @@
   }
 </style>
 
-{%- comment -%} On a product page the whole section is shown on mobile only (nq-pdp-mobile-only). {%- endcomment -%}
-<div id="nq-sec-{{ block.id }}" class="nq-section{% if product %} nq-pdp-mobile-only{% endif %}"
+{%- comment -%}
+  Product-page visibility. Previously the section was hard-coded to mobile-only
+  on product pages, which meant desktop product pages showed nothing at all —
+  the main thing stopping this block from replacing Shopify's native gallery.
+  Now it's a setting, defaulting to "mobile" so existing stores are unchanged.
+{%- endcomment -%}
+{%- assign nq_pdp = block.settings.pdp_visibility | default: 'mobile' -%}
+{%- assign nq_pdp_class = '' -%}
+{%- if product -%}
+  {%- if nq_pdp == 'mobile' -%}
+    {%- assign nq_pdp_class = ' nq-pdp-mobile-only' -%}
+  {%- elsif nq_pdp == 'desktop' -%}
+    {%- assign nq_pdp_class = ' nq-pdp-desktop-only' -%}
+  {%- endif -%}
+{%- endif -%}
+<div id="nq-sec-{{ block.id }}" class="nq-section{{ nq_pdp_class }}"
      style="padding: {{ block.settings.vertical_padding }}px {{ block.settings.horizontal_padding }}px;">
 
   {%- if block.settings.heading != blank -%}
@@ -324,6 +338,18 @@
         { "value": "mobile_only",  "label": "Mobile Only"    }
       ],
       "default": "all"
+    },
+    {
+      "type": "select",
+      "id": "pdp_visibility",
+      "label": "Show On Product Pages",
+      "info": "Plays your videos on the product page straight from our storage — no Shopify video limit applies. Only affects product pages.",
+      "options": [
+        { "value": "mobile",  "label": "Mobile only" },
+        { "value": "desktop", "label": "Desktop only" },
+        { "value": "both",    "label": "Mobile and desktop" }
+      ],
+      "default": "mobile"
     },
     {
       "type": "select", "id": "tile_type", "label": "Tile Type",

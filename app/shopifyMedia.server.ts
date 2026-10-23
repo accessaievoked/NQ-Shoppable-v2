@@ -361,13 +361,21 @@ export async function pushVideoToProduct(
     // Store-wide cap tied to the Shopify plan (250 videos + 3D models on Basic),
     // separate from storage. Nothing in the API gets around it, so say what the
     // actual options are instead of repeating Shopify's "upgrade your plan".
-    if (/does not permit more than \d+ videos/i.test(message)) {
+    // Shopify states the store's actual allowance in the message, and it varies
+    // by plan — so quote its number rather than assuming Basic's. Saying "250"
+    // to a store whose real cap is different just sends people hunting for
+    // slots that were never there.
+    const capMatch = message.match(/does not permit more than (\d+) videos/i);
+    if (capMatch) {
+      const cap = capMatch[1];
       return {
         ok: false,
         error:
-          "This store has used all the videos its Shopify plan allows (250 on Basic, store-wide). " +
-          "Free a slot by deleting unused videos in Shopify admin > Content > Files, or upgrade the plan. " +
-          "The storefront carousel is unaffected — it plays from our own storage and has no such limit.",
+          `This store has used all ${cap} of the Shopify-hosted videos its plan allows (counted store-wide, ` +
+          `across every product). Free a slot by deleting unused videos in Shopify admin > Content > Files, ` +
+          `or upgrade the plan. ` +
+          `This only affects Shopify's own product gallery — the storefront carousel and product-page block ` +
+          `play from our storage and have no such limit.`,
       };
     }
     return { ok: false, error: message };
