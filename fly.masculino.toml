@@ -1,0 +1,49 @@
+# Fly config for the Masculino deployment.
+# Deploy with:  fly deploy -c fly.masculino.toml -a nq-shoppable-masculino
+# (every other client keeps its own config — no collisions.)
+
+app = "nq-shoppable-masculino"
+primary_region = "sin"
+
+[build]
+
+[env]
+  PORT = "3000"
+  NODE_ENV = "production"
+
+# No volume needed — data lives in Neon Postgres (set via DATABASE_URL secret);
+# videos live in this client's own Cloudflare R2 (set via R2_* secrets).
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 200
+    hard_limit = 250
+
+[[vm]]
+  # 1GB, not 512MB: ffmpeg (libx264) gets OOM-killed encoding 1080x1920 phone
+  # video alongside Node — "Out of memory: Killed process (ffmpeg)" in the logs,
+  # leaving videos stuck on Processing.
+  #
+  # KNOWN CEILING: the upload route buffers the whole file in memory
+  # (request.formData, then arrayBuffer, then Buffer — roughly 3x the file
+  # size), so on 1GB a merchant cannot upload much past ~70MB before the
+  # kernel kills something. umaybanaras hit this. If this client uploads long
+  # or high-bitrate video, raise memory to "2gb" (+$6/month at Fly's current
+  # $6/GB rate) until the upload path streams to R2 instead of buffering.
+  #
+  # 4 CPUs so more than one video can encode in parallel — matching indethnic,
+  # lovecovera and umaybanaras. The single-CPU clients get noticeably slow once
+  # two or three videos are reprocessed at once.
+  #
+  # Swap is free and turns some OOM kills into brief slowdowns.
+  memory = "1gb"
+  swap_size_mb = 512
+  cpu_kind = "shared"
+  cpus = 4
